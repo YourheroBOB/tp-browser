@@ -166,24 +166,22 @@ export class BrowserHub {
   async goto(targetId, url, { referer, timeout = 30000, waitUntil = 'load' } = {}) {
     const st = this.sessionOf(targetId);
     const started = Date.now();
-    const navPromise = this.cdp.send('Page.navigate', { url, referer }, { sessionId: st.sessionId, timeout: Math.min(timeout, 30000) }).catch((e) => { throw new EgoError('NavigationError', `page.goto: ${e.message}`); });
-    const res = await navPromise;
+    // Arm the load-event waiter BEFORE sending Page.navigate: a fast page can
+    // finish loading between the navigate command and a later once().
+    let waitP = null; let evName = null;
+    if (waitUntil === 'load' || waitUntil === 'domcontentloaded') {
+      evName = waitUntil === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired';
+      waitP = once(this.cdp, evName, { sessionId: st.sessionId, timeout });
+      waitP.catch(() => {});
+    }
+    const res = await this.cdp.send('Page.navigate', { url, referer }, { sessionId: st.sessionId, timeout: Math.min(timeout, 30000) }).catch((e) => { throw new EgoError('NavigationError', `page.goto: ${e.message}`); });
     if (res.errorText) throw new EgoError('NavigationError', `page.goto: ${res.errorText} (${url})`);
     if (waitUntil === 'commit') { st.url = url; return { url: res.url || url, frameId: res.frameId }; }
-    if (waitUntil === 'domcontentloaded' || waitUntil === 'load') {
-      const evName = waitUntil === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired';
-      const deadline = started + timeout;
-      const waitMs = Math.max(50, deadline - Date.now());
-      // register the event waiter BEFORE navigating: a fast local page can
-      // finish loading between the navigate response and a later once()
+    if (waitP) {
       let settled = false;
-      const waitP = once(this.cdp, evName, { sessionId: st.sessionId, timeout: waitMs });
-      waitP.catch(() => {}); // we surface our own timeout below
-      const nav = await navPromise;
-      if (nav.errorText) throw new EgoError('NavigationError', `page.goto: ${nav.errorText} (${url})`);
-      try { await waitP; settled = true; } catch { /* fall through to timeout error */ }
+      try { await waitP; settled = true; } catch { /* handled below */ }
       if (!settled) throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`);
-      return { url: nav.url || url, frameId: nav.frameId };
+      return { url: res.url || url, frameId: res.frameId };
     }
     if (waitUntil === 'networkidle') {
       const deadline = started + timeout;

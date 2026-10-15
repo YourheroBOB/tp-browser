@@ -35,10 +35,12 @@ function safePath(p, { mustExist = false } = {}) {
 }
 
 // Data root is a fixed constant (symlink the directory to relocate it).
-// Nothing environment-derived ever reaches a filesystem write.
+// Nothing environment-derived ever reaches a filesystem write or a fetch URL.
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const PORT = Number(process.env.EGO_BROWSERD_PORT || 9772);
-const CHROME_DEBUG_PORT = Number(process.env.EGO_BROWSER_PORT || 9773);
+// Chromium attach target is a fixed loopback constant (no env/config input).
+const CHROME_DEBUG_PORT = 9773;
+const CHROME_VERSION_URL = 'http://127.0.0.1:9773/json/version';
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
 mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
@@ -51,14 +53,10 @@ function log(...a) { console.log('[ego-browserd]', ...a); }
 async function attachChrome() {
   for (;;) {
     try {
-      let wsUrl = process.env.EGO_BROWSER_WS || null;
-      if (!wsUrl) {
-        const httpUrl = `http://127.0.0.1:${CHROME_DEBUG_PORT}/json/version`;
-        const res = await fetch(httpUrl, { signal: AbortSignal.timeout(3000) });
-        const info = await res.json();
-        wsUrl = info.webSocketDebuggerUrl;
-      }
-      if (!wsUrl) throw new Error('no webSocketDebuggerUrl');
+      const res = await fetch(CHROME_VERSION_URL, { signal: AbortSignal.timeout(3000) });
+      const info = await res.json();
+      const wsUrl = info.webSocketDebuggerUrl;
+      if (!wsUrl || !String(wsUrl).startsWith('ws://127.0.0.1:')) throw new Error('unexpected webSocketDebuggerUrl');
       const cdp = new Cdp(wsUrl, 'chrome');
       await cdp.connect();
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush });

@@ -174,9 +174,16 @@ export class BrowserHub {
       const evName = waitUntil === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired';
       const deadline = started + timeout;
       const waitMs = Math.max(50, deadline - Date.now());
-      try { await once(this.cdp, evName, { sessionId: st.sessionId, timeout: waitMs }); }
-      catch { throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`); }
-      return { url: res.url || url, frameId: res.frameId };
+      // register the event waiter BEFORE navigating: a fast local page can
+      // finish loading between the navigate response and a later once()
+      let settled = false;
+      const waitP = once(this.cdp, evName, { sessionId: st.sessionId, timeout: waitMs });
+      waitP.catch(() => {}); // we surface our own timeout below
+      const nav = await navPromise;
+      if (nav.errorText) throw new EgoError('NavigationError', `page.goto: ${nav.errorText} (${url})`);
+      try { await waitP; settled = true; } catch { /* fall through to timeout error */ }
+      if (!settled) throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`);
+      return { url: nav.url || url, frameId: nav.frameId };
     }
     if (waitUntil === 'networkidle') {
       const deadline = started + timeout;

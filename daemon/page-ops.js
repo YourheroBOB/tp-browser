@@ -178,10 +178,24 @@ export class BrowserHub {
     if (res.errorText) throw new EgoError('NavigationError', `page.goto: ${res.errorText} (${url})`);
     if (waitUntil === 'commit') { st.url = url; return { url: res.url || url, frameId: res.frameId }; }
     if (waitP) {
-      let settled = false;
-      try { await waitP; settled = true; } catch { /* handled below */ }
-      if (!settled) throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`);
-      return { url: res.url || url, frameId: res.frameId };
+      // Hybrid wait: resolve on the load event OR on a readyState poll that
+      // observes the committed navigation reaching 'complete'. Event-only
+      // waits are timing-fragile on freshly attached targets.
+      const targetUrl = res.url || url;
+      let done = false;
+      waitP.then(() => { done = true; }, () => {});
+      const deadline = started + timeout;
+      while (!done && Date.now() < deadline) {
+        await sleep(150);
+        let rs = null; let cur = null;
+        try { rs = await this.evalIn(targetId, 'document.readyState', { timeout: 1500 }); } catch {}
+        if (rs === 'complete') {
+          try { cur = await this.evalIn(targetId, 'location.href', { timeout: 1500 }); } catch {}
+          if (cur === targetUrl || (cur && targetUrl.startsWith(cur.replace(/\/$/, '')))) done = true;
+        }
+      }
+      if (!done) throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`);
+      return { url: targetUrl, frameId: res.frameId };
     }
     if (waitUntil === 'networkidle') {
       const deadline = started + timeout;

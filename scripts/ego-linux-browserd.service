@@ -1,0 +1,12 @@
+[Unit]
+Description=ego-linux agent browser daemon (ego-browser compatible)
+After=ego-linux-chrome.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env node %h/.local/share/ego-linux/app/daemon/ego-browserd.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

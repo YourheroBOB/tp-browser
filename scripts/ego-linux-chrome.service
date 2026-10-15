@@ -1,0 +1,12 @@
+[Unit]
+Description=ego-linux headless Chromium for agents
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/chromium --headless=new --no-first-run --no-default-browser-check --remote-debugging-port=9773 --user-data-dir=%h/.local/share/ego-linux/profile-agent --window-size=1440,900 --noerrdialogs about:blank
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

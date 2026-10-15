@@ -1,0 +1,13 @@
+{
+  "name": "ego-linux",
+  "version": "0.1.0",
+  "description": "ego-browser compatible agent browser for Linux (daemon + CLI over CDP, zero dependencies)",
+  "type": "module",
+  "bin": {
+    "ego-browser": "bin/ego-browser.js",
+    "ego-browserd": "daemon/ego-browserd.js"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "private": true
+}

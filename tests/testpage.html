@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>ego-linux smoke page</title></head>
+<body>
+  <main>
+    <h1>Smoke 標題</h1>
+    <p id="para">你好，這是 ego-linux 的冒煙測試頁。</p>
+    <form id="f" onsubmit="return false">
+      <label for="name">姓名</label>
+      <input id="name" name="name" type="text" value="">
+      <label for="city">城市</label>
+      <select id="city" name="city">
+        <option value="tpe">台北</option>
+        <option value="txg">台中</option>
+        <option value="khh">高雄</option>
+      </select>
+      <button id="hello" type="button">問候</button>
+      <button id="alerter" type="button" onclick="alert('對話框內容')">彈窗</button>
+    </form>
+    <a id="popup-link" href="about:blank" target="_blank">開新視窗</a>
+    <a id="dl" href="/download">下載檔案</a>
+    <div id="out"></div>
+  </main>
+  <script>
+    document.getElementById('hello').addEventListener('click', () => {
+      const n = document.getElementById('name').value || '訪客';
+      document.getElementById('out').textContent = `hello ${n} @ ${document.getElementById('city').value}`;
+    });
+  </script>
+</body>
+</html>

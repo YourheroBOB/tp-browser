@@ -429,7 +429,7 @@ export class BrowserHub {
 
   async evaluate(targetId, fnSource, arg, { timeout = 30000 } = {}) {
     const argJson = JSON.stringify(arg === undefined ? null : arg);
-    const expression = `(async()=>{try{const fn=(${fnSource});const v=await fn(${argJson});return {__ok:true,v:v===undefined?null:v}}catch(e){return {__ok:false,e:String(e&&e.message||e)}}})()`;
+    const expression = `(async()=>{try{const __f=(${fnSource});const v=typeof __f==='function'?await __f(${argJson}):await __f;return {__ok:true,v:v===undefined?null:v}}catch(e){return {__ok:false,e:String(e&&e.message||e)}}})()`;
     const st = this.sessionOf(targetId);
     let res;
     try {

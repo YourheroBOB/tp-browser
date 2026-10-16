@@ -106,6 +106,7 @@
       return { kind: 'role', role: mm[1].toLowerCase(), nameSpec: mm[2] || null };
     }
     if (sel.startsWith('loc=css:')) return { kind: 'css', value: sel.slice(8) };
+    if (sel.startsWith('css:')) return { kind: 'css', value: sel.slice(4) };
     if (sel.startsWith('loc=href:')) return { kind: 'href', value: sel.slice(9) };
     if (sel.startsWith('xpath=')) return { kind: 'xpath', value: sel.slice(6) };
     // css=... with optional :has-text()/:text-is() and >> nth=N

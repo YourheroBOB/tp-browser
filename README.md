@@ -1,15 +1,26 @@
-# ego-linux — ego-browser 相容的 Linux agent 瀏覽器
+# TP 瀏覽器 (`ego-linux` / `ego-win`) — ego-browser 相容的跨平台 Agent 瀏覽器
 
-在 Linux 上重製 Mac ego lite 的 agent 面向：**同一套 `ego-browser nodejs` CLI 與
-`taskSpace()/page()` SDK**，讓既有 ego-browser skill 腳本不改就能在 Linux 節點跑。
+在 Linux 與 Windows 上重製 Mac ego lite 的 agent 面向：**同一套 `ego-browser nodejs`（別名 `tp-browser nodejs`）CLI 與
+`taskSpace()/page()` SDK**，讓既有 ego-browser skill 與 `toopower_run.py` 腳本不改就能在 Linux 與 Windows 節點原生運作。
 
-- 零 npm 依賴（Node ≥22 內建 WebSocket client／fetch）。
-- 底層＝本機 Chromium 的 CDP（DevTools 協定）。
+- 零 npm 依賴（Node ≥22 內建 WebSocket client／fetch；Node 20 帶 `--experimental-websocket`）。
+- 底層＝本機 Chromium（Google Chrome / Microsoft Edge / Chromium）的 CDP（DevTools 協定）。
 - 傳輸＝localhost HTTP `POST /rpc` ＋ SSE `/events`（daemon 認 token）。
-- daemon **只連不生**：Chrome 由 systemd／操作員以 `--remote-debugging-port=9773` 啟動
-  （此專案全程零 child_process，見專案 DESIGN.md 的掃描器裁定記錄）。
+- daemon **只連不生**：Chrome/Edge 由 systemd（Linux）或 `ego-start.ps1` / Windows Startup（Windows）以 `--remote-debugging-port=9773`（若與 WSL2 鏡像網路共用則自動切換 `9774/9775`）啟動
+  （此專案 JS 核心全程零 child_process，見專案 DESIGN.md 的掃描器裁定記錄）。
 
-## 快速開始
+## 快速開始（Windows 原生版）
+
+```powershell
+.\install.cmd                     # 或 powershell -ExecutionPolicy Bypass -File .\install.ps1
+ego-browser doctor                # 健檢（別名：tp-browser doctor）
+ego-browser status                # 檢查 daemon 與 Chrome/Edge 連線狀態
+ego-start                         # 啟動/確保背景無頭模式常駐
+ego-headed                        # 切換為有頭 GUI 視窗模式（供人工登入 AI 網站，共用同一個 profile-agent）
+ego-stop                          # 停止 TP 瀏覽器背景服務（不影響個人開啟的 Chrome/Edge 視窗）
+```
+
+## 快速開始（Linux 版）
 
 ```sh
 ./install.sh                      # 裝到 ~/.local/share/ego-linux/app + ~/.local/bin
@@ -17,7 +28,7 @@ systemctl --user enable --now ego-linux-chrome ego-linux-browserd   # 或見下�
 ego-browser doctor                # 健檢＋印修復指令
 ```
 
-手動啟動（免 systemd）：
+手動啟動（Linux 免 systemd）：
 
 ```sh
 chromium --headless=new --no-first-run --no-default-browser-check \

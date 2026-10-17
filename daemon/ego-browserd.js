@@ -37,10 +37,11 @@ function safePath(p, { mustExist = false } = {}) {
 // Data root is a fixed constant (symlink the directory to relocate it).
 // Nothing environment-derived ever reaches a filesystem write or a fetch URL.
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
-const PORT = Number(process.env.EGO_BROWSERD_PORT || 9772);
+const ALT_PORT = process.argv.includes('--alt-port') || process.env.EGO_BROWSERD_PORT === '9774';
+const PORT = ALT_PORT ? 9774 : 9772;
 // Chromium attach target is a fixed loopback constant (no env/config input).
-const CHROME_DEBUG_PORT = 9773;
-const CHROME_VERSION_URL = 'http://127.0.0.1:9773/json/version';
+const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;
+const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
 mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
@@ -71,7 +72,7 @@ async function attachChrome() {
       for (const s of store.list()) for (const pg of Object.values(s.pages)) if (pg.targetId) bound.add(pg.targetId);
       for (const [tid, st] of hub.sessions) {
         if (bound.has(tid)) continue;
-        if (!st.url || st.url === 'about:blank' || st.url === 'chrome://newtab/') {
+        if (!st.url || st.url === 'about:blank' || st.url.startsWith('chrome://newtab') || st.url.startsWith('edge://newtab')) {
           try { await hub.cdp.send('Target.closeTarget', { targetId: tid }); } catch {}
         }
       }
@@ -325,7 +326,7 @@ async function pageCall(p) {
         const path = safePath(opts.path);
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, Buffer.from(b64, 'base64'));
-        result = { path };
+        result = { path: opts.path };
       } else result = { base64: b64 };
       break;
     }

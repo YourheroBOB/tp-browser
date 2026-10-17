@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const TOKEN_FILE = join(DATA_DIR, 'token');
@@ -17,13 +17,33 @@ function readToken() {
   return readFileSync(TOKEN_FILE, 'utf8').trim();
 }
 function readPort() {
-  if (existsSync(DAEMON_JSON)) { try { return JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port; } catch {} }
+  if (existsSync(DAEMON_JSON)) {
+    try {
+      const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port;
+      if (p === 9774) return 9774;
+    } catch {}
+  }
   return 9772;
+}
+function readChromePort() {
+  if (existsSync(DAEMON_JSON)) {
+    try {
+      const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).chromePort;
+      if (p === 9775) return 9775;
+    } catch {}
+  }
+  return 9773;
+}
+function daemonBase(port) {
+  return port === 9774 ? 'http://127.0.0.1:9774' : 'http://127.0.0.1:9772';
+}
+function chromeVersionUrl(chromePort) {
+  return chromePort === 9775 ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
 }
 
 async function health(port) {
   try {
-    const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2500) });
+    const r = await fetch(`${daemonBase(port)}/health`, { signal: AbortSignal.timeout(2500) });
     return await r.json();
   } catch { return null; }
 }
@@ -42,8 +62,8 @@ async function main() {
     return;
   }
   if (sub === 'doctor') return doctor();
-  if (sub === 'version') { console.log('ego-linux 0.1.0 (ego-browser compatible subset)'); return; }
-  console.log(`ego-browser (ego-linux build)
+  if (sub === 'version') { console.log(`ego-browser 0.2.0 (TP Browser / ${process.platform === 'win32' ? 'ego-win' : 'ego-linux'} compatible)`); return; }
+  console.log(`ego-browser / tp-browser (${process.platform === 'win32' ? 'ego-win' : 'ego-linux'} build)
 usage:
   ego-browser nodejs -e 'code'      run an agent script (-e) or pipe one via stdin/heredoc
   ego-browser status                daemon + chrome health
@@ -55,7 +75,7 @@ usage:
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }
 
 async function rpcCmd(port, method, params) {
-  const res = await fetch(`http://127.0.0.1:${port}/rpc`, {
+  const res = await fetch(`${daemonBase(port)}/rpc`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-ego-token': readToken() },
     body: JSON.stringify({ id: 1, method, params: params || {} }),
@@ -67,20 +87,30 @@ async function rpcCmd(port, method, params) {
 
 async function doctor() {
   const port = readPort();
-  const chromePort = 9773;
-  console.log('== ego-linux doctor ==');
+  const chromePort = readChromePort();
+  const isWin = process.platform === 'win32';
+  console.log(`== tp-browser (${isWin ? 'ego-win' : 'ego-linux'}) doctor ==`);
   const h = await health(port);
   console.log(`daemon  127.0.0.1:${port}: ${h ? `ok (chrome attached: ${h.chrome})` : 'NOT RUNNING'}`);
-  if (!h) console.log(`  fix: node ${daemonPath()}   # or: systemctl --user start ego-browserd`);
+  if (!h) {
+    if (isWin) console.log(`  fix: ego-start   # or: node "${daemonPath()}"`);
+    else console.log(`  fix: node ${daemonPath()}   # or: systemctl --user start ego-browserd`);
+  }
   let chromeOk = false;
-  try { const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`, { signal: AbortSignal.timeout(2500) }); const v = await r.json(); chromeOk = true; console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`); } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
+  try { const r = await fetch(chromeVersionUrl(chromePort), { signal: AbortSignal.timeout(2500) }); const v = await r.json(); chromeOk = true; console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`); } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
   if (!chromeOk) {
-    console.log('  fix (headless agent profile):');
-    console.log('    mkdir -p ~/.local/share/ego-linux/profile-agent');
-    console.log('    chromium --headless=new --no-first-run --no-default-browser-check \\');
-    console.log(`      --remote-debugging-port=${chromePort} --user-data-dir=$HOME/.local/share/ego-linux/profile-agent \\`);
-    console.log('      --window-size=1440,900 about:blank &');
-    console.log('  (Xvfb headed variant: drop --headless=new after starting Xvfb and setting DISPLAY)');
+    if (isWin) {
+      console.log('  fix (Windows headless or headed agent profile):');
+      console.log('    ego-start           # start headless background TP Browser');
+      console.log('    ego-headed          # start headed GUI TP Browser (for human login)');
+    } else {
+      console.log('  fix (headless agent profile):');
+      console.log('    mkdir -p ~/.local/share/ego-linux/profile-agent');
+      console.log('    chromium --headless=new --no-first-run --no-default-browser-check \\');
+      console.log(`      --remote-debugging-port=${chromePort} --user-data-dir=$HOME/.local/share/ego-linux/profile-agent \\`);
+      console.log('      --window-size=1440,900 about:blank &');
+      console.log('  (Xvfb headed variant: drop --headless=new after starting Xvfb and setting DISPLAY)');
+    }
   }
   if (h && !h.chrome) console.log('  daemon is up but Chromium not attached; it retries every 3s once chrome answers.');
 }
@@ -97,13 +127,18 @@ async function runNodeJs(args) {
       process.stdin.on('end', () => resolve(buf));
     });
   }
+  code = String(code || '').replace(/^\uFEFF/, '');
 
   const port = readPort();
   const h = await health(port);
   if (!h) {
     console.error(`ego-browserd is not reachable on 127.0.0.1:${port}.`);
-    console.error(`Start the daemon first:  node ${daemonPath()}`);
-    console.error(`Then start Chromium with:  chromium --headless=new --remote-debugging-port=9773 --user-data-dir=$HOME/.local/share/ego-linux/profile-agent`);
+    if (process.platform === 'win32') {
+      console.error('Start TP Browser first:  ego-start');
+    } else {
+      console.error(`Start the daemon first:  node ${daemonPath()}`);
+      console.error(`Then start Chromium with:  chromium --headless=new --remote-debugging-port=9773 --user-data-dir=$HOME/.local/share/ego-linux/profile-agent`);
+    }
     process.exit(2);
   }
 
@@ -120,7 +155,7 @@ async function runNodeJs(args) {
   writeFileSync(tmp, code, { mode: 0o600 });
   let exitCode = 0;
   try {
-    await import(tmp);
+    await import(pathToFileURL(tmp).href);
   } catch (e) {
     exitCode = 1;
     console.error(`${e.name || 'Error'}: ${e.message}`);

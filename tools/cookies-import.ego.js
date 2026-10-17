@@ -2,9 +2,12 @@
 // The source path is a constant by design; relocate via symlink, not env vars.
 // usage: cp your-cookies.json /tmp/ego-cookies.json
 //        ego-browser nodejs < tools/cookies-import.ego.js
-const { readFileSync } = await import('node:fs');
-// Fixed input: /tmp/ego-cookies.json (absolute, no traversal, constant)
-const IN = '/tmp/ego-cookies.json';
+const { readFileSync, existsSync } = await import('node:fs');
+const { join } = await import('node:path');
+const { homedir } = await import('node:os');
+// Fixed inputs: ~/.local/share/ego-linux/ego-cookies.json or /tmp/ego-cookies.json
+const HOME_IN = join(homedir(), '.local', 'share', 'ego-linux', 'ego-cookies.json');
+const IN = existsSync(HOME_IN) ? HOME_IN : '/tmp/ego-cookies.json';
 const task = await taskSpace('cookies-import');
 const page = task.page('p1');
 const data = JSON.parse(readFileSync(IN, 'utf8'));

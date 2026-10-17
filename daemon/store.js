@@ -16,9 +16,14 @@ export class Store {
   }
   persist() {
     mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.data, null, 1));
-    renameSync(tmp, this.file);
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    const body = JSON.stringify(this.data, null, 1);
+    try {
+      writeFileSync(tmp, body);
+      renameSync(tmp, this.file);
+    } catch {
+      writeFileSync(this.file, body);
+    }
   }
   list() { return Object.values(this.data.spaces); }
   get(id) { return this.data.spaces[id] ?? null; }

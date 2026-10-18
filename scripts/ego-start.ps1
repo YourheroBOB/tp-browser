@@ -91,7 +91,7 @@ if (-not $NodeBin) {
 }
 
 # 6. Launch Chrome/Edge with CDP on $ChromePort (using WMI Win32_Process.Create for zero handle inheritance in headless mode)
-$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --noerrdialogs --disable-popup-blocking --disable-extensions --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate about:blank"
+$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --noerrdialogs --disable-popup-blocking --disable-extensions --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate about:blank"
 if (-not $Headed) {
     $ChromeCmdLine = "`"$BrowserBin`" --headless=new $CommonFlags"
     Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $ChromeCmdLine } | Out-Null

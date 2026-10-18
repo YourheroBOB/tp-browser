@@ -40,19 +40,52 @@ export class BrowserHub {
     cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {});
     cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
     cdp.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', eventsEnabled: true, downloadPath: this.downloadsDir }).catch(() => {});
+    this._cleanUaPromise = cdp.send('Browser.getVersion').then((v) => {
+      const userAgent = (v?.userAgent || '').replace('HeadlessChrome/', 'Chrome/');
+      const fullVer = (v?.product || 'Chrome/155.0.0.0').split('/')[1] || '155.0.0.0';
+      const majorVer = fullVer.split('.')[0] || '155';
+      const isWin = /Windows/i.test(userAgent);
+      const isMac = /Macintosh/i.test(userAgent);
+      const platform = isWin ? 'Windows' : (isMac ? 'macOS' : 'Linux');
+      const platformVersion = isWin ? '15.0.0' : (isMac ? '15.0.0' : '6.8.0');
+      const userAgentMetadata = {
+        brands: [
+          { brand: 'Not_A Brand', version: '24' },
+          { brand: 'Chromium', version: majorVer },
+          { brand: 'Google Chrome', version: majorVer },
+        ],
+        fullVersionList: [
+          { brand: 'Not_A Brand', version: '24.0.0.0' },
+          { brand: 'Chromium', version: fullVer },
+          { brand: 'Google Chrome', version: fullVer },
+        ],
+        platform,
+        platformVersion,
+        architecture: 'x86',
+        model: '',
+        mobile: false,
+        bitness: '64',
+        wow64: false,
+      };
+      return { userAgent, userAgentMetadata };
+    }).catch(() => null);
   }
 
   async _browserEvent(method, params) {
     if (method === 'Target.attachedToTarget') {
       const { sessionId, targetInfo } = params;
       if (targetInfo.type !== 'page') { try { await this.cdp.send('Runtime.run', {}, { sessionId }); } catch {} return; }
-      this.sessions.set(targetInfo.targetId, {
+      const st = {
         sessionId, targetInfo, mainFrameId: null, frames: new Set(),
         net: new Set(), netQuietAt: Date.now(), events: [], dialogs: [], choosers: [],
-        title: targetInfo.title || '', url: targetInfo.url || '', modBits: 0, interceptingChooser: false,
-      });
+        title: targetInfo.title || '', url: targetInfo.url || '', modBits: 0, interceptingChooser: false, uaCleaned: false,
+      };
+      this.sessions.set(targetInfo.targetId, st);
       const opts = { sessionId };
       await Promise.all(['Page.enable', 'Runtime.enable', 'DOM.enable', 'Network.enable'].map((x) => this.cdp.send(x, {}, opts).catch(() => {})));
+      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: "Object.defineProperty(navigator, 'webdriver', { get: () => false });",
+      }, opts).catch(() => {});
       return;
     }
     if (method === 'Target.targetCreated') {
@@ -165,6 +198,16 @@ export class BrowserHub {
   // ---- goto / waits ----
   async goto(targetId, url, { referer, timeout = 30000, waitUntil = 'load' } = {}) {
     const st = this.sessionOf(targetId);
+    if (!st.uaCleaned && this._cleanUaPromise) {
+      const uaInfo = await this._cleanUaPromise;
+      if (uaInfo && uaInfo.userAgent) {
+        await this.cdp.send('Network.setUserAgentOverride', {
+          userAgent: uaInfo.userAgent,
+          userAgentMetadata: uaInfo.userAgentMetadata,
+        }, { sessionId: st.sessionId }).catch(() => {});
+        st.uaCleaned = true;
+      }
+    }
     const started = Date.now();
     // Arm the load-event waiter BEFORE sending Page.navigate: a fast page can
     // finish loading between the navigate command and a later once().

@@ -1,0 +1,372 @@
+[
+  {
+    "host": "rog",
+    "group": "A",
+    "task": "task1",
+    "rc": 0,
+    "wallTimeSec": 76.09,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 4,
+      "inputTokens": 186919,
+      "outputTokens": 2180,
+      "totalTokens": 189099,
+      "cacheReadTokens": 149184,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 2,
+      "browserInputTokens": 92295,
+      "browserOutputTokens": 1720,
+      "browserTotalTokens": 94015,
+      "browserModelDurationSec": 37.06
+    },
+    "summary": "任務一完成。已用 TP WIN 瀏覽器依序開啟 3 篇 Perplexity 對話，透過捲動容器與點擊「Read more」克服懶加載後擷取全文，結果如下：\n\n- Thread 1（ROG Ally 外接顯卡討論）：5,250 字元\n- Thread 2（ChatGPT agent 本地 computer use 評估）：11,073 字元\n- Thread 3（律師財務危機 30 天 YT 衝刺計畫）：3,420 字元\n- **3 篇合計約 20,400 字元**（含標題與分隔列），輸出檔已寫入 `C:\\tp_win_eval\\group_A\\task1_ppx_threads.md`（37,656 bytes）。",
+    "outFiles": {
+      "task1_ppx_threads.md": {
+        "chars": 20400,
+        "lines": 664,
+        "preview": "# Perplexity 3 Complex Threads Full Extraction (TP WIN Browser)\n\n## Thread 1: 我這台 ROG Ally，我記得我們之前討論過很多次了。它有一個筆電版的外接顯卡，是 RTX 4090 16GB 顯存；ROG Ally 本身則有 16GB...\n- URL: https://www.perplexity.ai/search/7603eaed-8746-439b-9ba3-78c165a4a52a\n- Length: 5250 chars\n\n回答\n連結\n圖片\n新聞\n分享\n上午11:25\n\n我這台 ROG Ally，我記得我們之前討論過很多次了。它有一個筆電版的外接顯卡，是 RTX 4090 16GB 顯存；ROG Ally 本身則有 16GB 記憶體，裝了 Windows 跟 WSL 雙系統。\n\n現在我想知道這張顯卡可"
+      }
+    },
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "pc-win",
+    "group": "A",
+    "task": "task1",
+    "rc": 0,
+    "wallTimeSec": 103.53,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 6,
+      "inputTokens": 300833,
+      "outputTokens": 4621,
+      "totalTokens": 305454,
+      "cacheReadTokens": 274752,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 2,
+      "browserInputTokens": 94451,
+      "browserOutputTokens": 3497,
+      "browserTotalTokens": 97948,
+      "browserModelDurationSec": 46.52
+    },
+    "summary": "任務一完成。3 篇 Perplexity 複雜對話皆已透過 TP WIN 瀏覽器（ego-browser）完成擷取，克服懶加載（全部可滾動元素逐步滾動 + 展開 Read more），三篇結尾均完整無截斷：\n\n| # | 對話主題 | 字數 |\n|---|---|---|\n| 1 | ROG Ally + RTX 4090 XG Mobile 本地推論硬體基準（175 來源） | 5,250 字 |\n| 2 | ChatGPT DOT 本機 computer use 評估（29 來源） | 11,073 字 |\n| 3 | 律師 30 天衝刺計畫・模型委員會（GPT-6 Astra／Claude Opus 5.5／Gemini 4 Argon 三模型對比，96 來源） | 3,420 字 |\n\n- **3 篇合計：19,743 字**（輸出檔含標題標頭共 20,400 字元／37,656 bytes）\n- 輸出檔：`C:\\tp_win_eval\\group_A\\task1_ppx_threads.md`\n- 執行腳本：`C:\\tp_win_eval\\group_A\\run_task1.js`",
+    "outFiles": {
+      "task1_ppx_threads.md": {
+        "chars": 20400,
+        "lines": 664,
+        "preview": "# Perplexity 3 Complex Threads Full Extraction (TP WIN Browser)\n\n## Thread 1: 我這台 ROG Ally，我記得我們之前討論過很多次了。它有一個筆電版的外接顯卡，是 RTX 4090 16GB 顯存；ROG Ally 本身則有 16GB...\n- URL: https://www.perplexity.ai/search/7603eaed-8746-439b-9ba3-78c165a4a52a\n- Length: 5250 chars\n\n回答\n連結\n圖片\n新聞\n分享\n上午11:25\n\n我這台 ROG Ally，我記得我們之前討論過很多次了。它有一個筆電版的外接顯卡，是 RTX 4090 16GB 顯存；ROG Ally 本身則有 16GB 記憶體，裝了 Windows 跟 WSL 雙系統。\n\n現在我想知道這張顯卡可"
+      }
+    },
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "pc-win",
+    "group": "A",
+    "task": "task2",
+    "rc": 0,
+    "wallTimeSec": 153.45,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 7,
+      "inputTokens": 397723,
+      "outputTokens": 10289,
+      "totalTokens": 408012,
+      "cacheReadTokens": 341184,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 5,
+      "browserInputTokens": 264464,
+      "browserOutputTokens": 9487,
+      "browserTotalTokens": 273951,
+      "browserModelDurationSec": 106.39
+    },
+    "summary": "任務二完成。兩個步驟都已執行完畢：\n\n**第一步（擷取）**：已將指定腳本寫入 `run_task2.js` 並透過 TP WIN 瀏覽器執行成功——匯入 `gpt_cookies.json`、開啟 `chatgpt.com/dots/home`（頁面標題 Coolly）、向上滾動 14 次觸發懶加載後全文擷取，輸出 `task2_gpt_dots_raw.md`（34,606 字元）。\n\n**第二步（分析）**：已讀完原始內容並寫出結構化報告 `task2_gpt_dots_analysis.md`。重點摘要：\n\n- **時間範圍注意**：任務寫「4/11～4/18」，但頁面實際內容是 **2026/10/16 15:07 ～ 10/18 23:52**（約 3 天），報告已依實際日期分析並註明差異。\n- **核心主題統計**（12 類）：最大宗是「DOT 接手 GB1 大總管交接」（約 18%）與「DOT vs Gemini Task vs MiMo 2.6 Pro 三家評比」（約 17%，掃 196 聊天室＋125 轉錄共 321 份來源），其餘為用量監控基建、Mimo／戰兵 1,296 份結果稽核、R1 合成測試、LINE OA 登入處理等。\n- **關鍵技術決策**：三視窗剩餘百分比＋45 分鐘時效的用量回報制、「自測通過≠驗收通過」的獨立複審閘（R1 被 450 項自測",
+    "outFiles": {
+      "task2_gpt_dots_raw.md": {
+        "chars": 34594,
+        "lines": 1098,
+        "preview": "# GPT-Dots (Coolly) Last 7 Days Full Extraction\n- URL: https://chatgpt.com/dots/home\n- Title: Coolly\n- ScrollHeight: 32857\n- Total Chars: 34460\n\n10月16日 下午3:07\n載入中\n\n① 失敗，重開後仍未取得桌面截圖。工具回傳原文：{\"apps\":[]}，沒有可擷取的原生應用目標。\n② 本次沒有執行到截圖呼叫，因此沒有截圖錯誤訊息；任務編號：01a14389-bea7-757a-b409-86c40a6610e4。\n③ 已實際呼叫：mcp__cua_repl.js → cua.getState。其餘方法僅出現在工具文件，不能當成已驗證可用的清單。\n\nDOT，第二輪（不含案件資料）。上一輪你呼叫的是 cua.getState，回 {\"apps\":[]"
+      },
+      "task2_gpt_dots_analysis.md": {
+        "chars": 5733,
+        "lines": 109,
+        "preview": "# 任務二分析報告：GPT-Dots（Coolly）對話擷取與結構化分析\n\n- 來源頁面：https://chatgpt.com/dots/home（頁面標題：Coolly）\n- 原始檔：`task2_gpt_dots_raw.md`（34,460 字元，ScrollHeight 32,857）\n- 擷取方式：TP WIN 瀏覽器匯入 GPT Cookies 後全文擷取\n\n## 〇、時間範圍說明\n\n任務指示寫「4/11～4/18」，但頁面實際內容的時間戳為 **2026/10/16 15:07 ～ 2026/10/18 23:52（台北時間）**，共約 3 天（「昨天」標記對應 10/18 前一日）。本報告依實際內容（10/16–10/18）分析，無 4 月份資料。\n\n對話雙方：**BOB（嚴柏顯律師，使用者）** 與 **DOT（GPT 端總管代理）**，全程環繞多代理艦隊（GB1、戰兵"
+      }
+    },
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "rog",
+    "group": "A",
+    "task": "task2",
+    "rc": 0,
+    "wallTimeSec": 296.33,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 8,
+      "inputTokens": 475882,
+      "outputTokens": 13853,
+      "totalTokens": 489735,
+      "cacheReadTokens": 390720,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 5,
+      "browserInputTokens": 280080,
+      "browserOutputTokens": 11506,
+      "browserTotalTokens": 291586,
+      "browserModelDurationSec": 209.22
+    },
+    "summary": "任務二已完成，兩個步驟都成功執行。\n\n## 執行結果\n\n**步驟 1（Cookie 匯入＋頁面擷取）**：已將指定腳本寫入 `C:\\tp_win_eval\\group_A\\run_task2.js`，透過 TP WIN 瀏覽器（`ego-browser.js nodejs`）匯入 `gpt_cookies.json` 的 16 KB 登入 Cookies，成功進入 `chatgpt.com/dots/home`（頁面標題「Coolly」，確認已登入），完整擷取 **41,513 字元**存入 `task2_gpt_dots_raw.md`。\n\n**步驟 2（結構化分析）**：已讀完原始檔並將分析報告寫入 `C:\\tp_win_eval\\group_A\\task2_gpt_dots_analysis.md`。\n\n## 重點發現\n\n**日期範圍勘誤**：頁面實際對話涵蓋 **2026/10/16～10/18**（即截至今天的最近一週），任務描述所寫「4/11～4/18」與頁面真實資料不符，報告已註明並以實際擷取內容分析。\n\n**核心主題統計**：三日對話約 75% 篇幅集中在代理艦隊治理——① PC Computer Use 桌面控制五輪診斷（約 22%）、② DOT vs Gemini Task vs MiMo 三家模型盲評（18%）、③ 戰兵 1,296 份交付稽核（10%）、④ ",
+    "outFiles": {
+      "task2_gpt_dots_raw.md": {
+        "chars": 41501,
+        "lines": 1352,
+        "preview": "# GPT-Dots (Coolly) Last 7 Days Full Extraction\n- URL: https://chatgpt.com/dots/home\n- Title: Coolly\n- ScrollHeight: 41117\n- Total Chars: 41367\n\n10月16日 上午1:25\n10月16日\n\n你說得對，我把一個能力確認弄得太繞。到目前為止，我只確認了建立新任務失敗，還沒確認桌面子任務裡到底有沒有 computer-use，不能把這兩件事混在一起。\n\n我現在直接用既有 PC 子任務查工具：只回報有沒有桌面截圖能力、能不能實際取得畫面，不操作 Grok Bot。\n\n既有 PC 子任務已接受這次查核，沒有另建：01a1407b-a458-73bc-9b94-c3c8b034000e。\n實際模型目前未核實；這次沿用原任務，沒有切換成 Luna。正在確認工具與"
+      },
+      "task2_gpt_dots_analysis.md": {
+        "chars": 6833,
+        "lines": 83,
+        "preview": "# GPT-Dots（Coolly／DOT）最近一週對話分析報告\n\n- 資料來源：`task2_gpt_dots_raw.md`（GPT-Dots 網頁端 `chatgpt.com/dots/home` 完整擷取，41,513 字元，scrollHeight 41,117）\n- 分析範圍：**2026-10-16 ～ 2026-10-18**（頁面實際可見的最近一週對話；任務描述所列「4/11～4/18」與頁面實際日期不符，本報告以實際擷取內容為準。截至 10/19，此區間即最近一週內全部有紀錄的對話）\n- 對話雙方：BOB（嚴柏顯律師）與 DOT（ChatGPT 頁面端總管代理，頁面標題「Coolly」）；期間 GB1（Coolly 大總管）多次透過 TP 瀏覽器代發訊息，10/17 起由 DOT 正式接手 GB1 職務\n\n---\n\n## 一、核心專案主題統計（10/16–10/18）\n"
+      }
+    },
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "pc-win",
+    "group": "A",
+    "task": "task3",
+    "rc": 0,
+    "wallTimeSec": 127.99,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 5,
+      "inputTokens": 285322,
+      "outputTokens": 11020,
+      "totalTokens": 296342,
+      "cacheReadTokens": 211136,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 3,
+      "browserInputTokens": 158016,
+      "browserOutputTokens": 10271,
+      "browserTotalTokens": 168287,
+      "browserModelDurationSec": 102.96
+    },
+    "summary": "任務三全部完成，三個步驟都在時限內收尾，最終報告已寫入 `C:\\tp_win_eval\\group_A\\task3_memhub_council.md`。\n\n**執行結果摘要：**\n\n1. **Hy-Memory 儲存庫**：`C:\\tp_win_eval\\group_A\\Hy-Memory` 已存在（免 clone），README 全文讀畢；`our_shared_memory_spec.md`（YHB v2.4 規格）也一併讀完。\n2. **PPX 模型委員會擷取**：TP WIN 瀏覽器腳本 `run_task3.js` 執行成功，用 mouseWheel 向上/向下各滾 8 次克服 Perplexity 虛擬滾動卸載，完整擷取 Gemini 4 Argon ＋ Claude Fable 5.1 ＋ GPT-6 Astra 的 2 輪討論共 21,251 字（R1=12,603、R2=8,393），存至 `ppx_council_raw.txt`。\n3. **研究報告**：`task3_memhub_council.md` 已產出，分三部分——Hy-Memory/MemHub 架構研究、委員會 2 輪討論重點實錄、綜合分析與建議。\n\n**核心結論（委員會共識）**：YHB 在多節點覆蓋（7 節點 vs MemHub 單機）、Windows 支援（MemHub 不支援）、Lin",
+    "outFiles": {
+      "task3_memhub_council.md": {
+        "chars": 12437,
+        "lines": 221,
+        "preview": "# 任務三研究報告：騰訊 Hy-Memory / MemHub 開源記憶引擎 × YHB 共享記憶層比較與導入分析\n\n> 產出日期：2026-10-19（民國 1151019）\n> 材料來源：\n> ① `Hy-Memory/README.md`（騰訊混元官方 repo，本地 clone）\n> ② `inputs/our_shared_memory_spec.md`（YHB System Shared Memory Architecture Specification v2.4）\n> ③ PPX 模型委員會 2 輪討論全文（`ppx_council_raw.txt`，共 21,251 字；委員＝Gemini 4 Argon ＋ Claude Fable 5.1 ＋ GPT-6 Astra）\n> 討論串 URL：https://www.perplexity.ai/search/358e3641"
+      }
+    },
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in missing\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "rog",
+    "group": "A",
+    "task": "task3",
+    "rc": 0,
+    "wallTimeSec": 281.81,
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 6,
+      "inputTokens": 341836,
+      "outputTokens": 14064,
+      "totalTokens": 355900,
+      "cacheReadTokens": 265664,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0,
+      "browserTurnCount": 3,
+      "browserInputTokens": 166449,
+      "browserOutputTokens": 11724,
+      "browserTotalTokens": 178173,
+      "browserModelDurationSec": 217.39
+    },
+    "summary": "任務三完成，三步驟全數在 5 個 Turn 內跑完，最終報告已寫入 `C:\\tp_win_eval\\group_A\\task3_memhub_council.md`。\n\n**執行結果**\n\n1. **研究下載**：`Hy-Memory/README.md` 已存在（免重新 clone），直接閱讀官方 README 與 `inputs/our_shared_memory_spec.md`（YHB v2.4 規格）。\n2. **TP WIN 瀏覽器擷取**：`run_task3.js` 照提供的語法寫入並以 `node ego-browser.js nodejs` 執行成功——用 CDP mouseWheel 先上捲掛載 Round 1、再下捲掛載 Round 2，克服 Perplexity 虛擬滾動卸載，共擷取 **18,102 字元**（R1 11,022／R2 6,825），討論串 URL 為 `dbff41e2-170a-4a8f-8dd8-c5352235bc5e`，全文落盤 `ppx_council_raw.txt`，第二輪全文零缺漏。\n3. **報告產出**：`task3_memhub_council.md` 包含 Hy-Memory/MemHub 技術摘要（Chat L0–L7、Working 事實/經驗雙層、Coding 零 LLM 版本演化鏈、30B-A3B 模型）",
+    "outFiles": {
+      "task3_memhub_council.md": {
+        "chars": 11776,
+        "lines": 206,
+        "preview": "# 任務三研究報告：騰訊開源 Hy-Memory / MemHub 研究 × PPX 模型委員會（AGRON + FABLE + ASTRA）2 輪討論實錄與分析\n\n> 產出日期：2026-10-19\n> 擷取方式：TP WIN 瀏覽器（ego-browser nodejs runtime + CDP mouseWheel 虛擬滾動雙向卸載克服）\n> 委員會討論串：https://www.perplexity.ai/search/dbff41e2-170a-4a8f-8dd8-c5352235bc5e\n> 原始擷取檔：`ppx_council_raw.txt`（18,102 字元；Round 1 = 11,022 字元、Round 2 = 6,825 字元）\n> 輸入材料：① `Hy-Memory/README.md`（Tencent-Hunyuan 官方，clone 自 GitHub）②"
+      }
+    },
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in missing\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n"
+  },
+  {
+    "host": "rog",
+    "group": "B",
+    "task": "task1",
+    "rc": -1,
+    "wallTimeSec": 420.06,
+    "usage": {
+      "modelRequestCount": 23,
+      "inputTokens": 1496484,
+      "outputTokens": 15337,
+      "totalTokens": 1511821,
+      "cacheReadTokens": 1430912,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 21,
+      "browserInputTokens": 1370579,
+      "browserOutputTokens": 14665,
+      "browserTotalTokens": 1385244,
+      "browserModelDurationSec": 375.0
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  },
+  {
+    "host": "pc-win",
+    "group": "B",
+    "task": "task1",
+    "rc": -1,
+    "wallTimeSec": 420.09,
+    "usage": {
+      "modelRequestCount": 10,
+      "inputTokens": 691379,
+      "outputTokens": 17126,
+      "totalTokens": 708505,
+      "cacheReadTokens": 624704,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 10,
+      "browserInputTokens": 691379,
+      "browserOutputTokens": 17126,
+      "browserTotalTokens": 708505,
+      "browserModelDurationSec": 295.33
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  },
+  {
+    "host": "rog",
+    "group": "B",
+    "task": "task2",
+    "rc": -1,
+    "wallTimeSec": 420.06,
+    "usage": {
+      "modelRequestCount": 19,
+      "inputTokens": 1426546,
+      "outputTokens": 13809,
+      "totalTokens": 1440355,
+      "cacheReadTokens": 1350464,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 19,
+      "browserInputTokens": 1426546,
+      "browserOutputTokens": 13809,
+      "browserTotalTokens": 1440355,
+      "browserModelDurationSec": 352.96
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  },
+  {
+    "host": "pc-win",
+    "group": "B",
+    "task": "task2",
+    "rc": -1,
+    "wallTimeSec": 420.12,
+    "usage": {
+      "modelRequestCount": 33,
+      "inputTokens": 2326908,
+      "outputTokens": 19811,
+      "totalTokens": 2346719,
+      "cacheReadTokens": 2245504,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 29,
+      "browserInputTokens": 2021880,
+      "browserOutputTokens": 17267,
+      "browserTotalTokens": 2039147,
+      "browserModelDurationSec": 333.17
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": false,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  },
+  {
+    "host": "pc-win",
+    "group": "B",
+    "task": "task3",
+    "rc": -1,
+    "wallTimeSec": 420.08,
+    "usage": {
+      "modelRequestCount": 40,
+      "inputTokens": 3536115,
+      "outputTokens": 23725,
+      "totalTokens": 3559840,
+      "cacheReadTokens": 3433216,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 35,
+      "browserInputTokens": 3274210,
+      "browserOutputTokens": 22819,
+      "browserTotalTokens": 3297029,
+      "browserModelDurationSec": 319.87
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  },
+  {
+    "host": "rog",
+    "group": "B",
+    "task": "task3",
+    "rc": -1,
+    "wallTimeSec": 420.06,
+    "usage": {
+      "modelRequestCount": 27,
+      "inputTokens": 1818674,
+      "outputTokens": 11071,
+      "totalTokens": 1829745,
+      "cacheReadTokens": 1741376,
+      "cacheWriteTokens": 0,
+      "browserTurnCount": 12,
+      "browserInputTokens": 831512,
+      "browserOutputTokens": 6142,
+      "browserTotalTokens": 837654,
+      "browserModelDurationSec": 143.4
+    },
+    "summary": "",
+    "outFiles": {},
+    "hyMemoryCloned": true,
+    "antiCheatIsolated": true,
+    "stderrTail": "ZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\nZCode Built-in skipped (not-due)\n\n[TIMEOUT]"
+  }
+]

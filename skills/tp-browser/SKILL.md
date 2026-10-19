@@ -82,9 +82,10 @@ EOF
 - `await p.setInputFiles("@N", ["relative/file.pdf"])` — Upload files to `<input type="file">`.
 - `await p.cdp(method, params)` — Direct Chrome DevTools Protocol call on the page target.
 
-### Human-Agent Co-Riding (Handling Captcha / 2FA / Login)
-1. When a page requires human login or 2FA, run `tp-headed` so the browser window opens visibly on the user's desktop.
-2. Every tab includes a bottom-right **`⚡ TooPower`** Co-Riding Control Bar with **`[🧑 我要接手操控]`** / **`[🤖 完成並交還 Agent]`** buttons.
-3. Cookie Sovereignty: Export/import local cookies (including `HttpOnly`) via:
+### Human-Agent Co-Riding (Handling Captcha / 2FA / Login / Account Switching)
+1. When a page requires human login, OAuth (`az login`, `microsoft.com/devicelogin`, Google OAuth), or 2FA, run `tp-headed` so the browser window opens visibly on the user's desktop.
+2. Every tab includes a bottom-right **`⚡ TooPower`** Co-Riding Control Bar with **`[🧑 我要接手操控]`**, **`[🔄 換帳號]`**, and **`[🤖 完成並交還 Agent]`** buttons.
+3. **Switching Cached SSO Accounts (`await p.resetSiteAuth()`)**: If a login page (e.g., Microsoft Azure / Live / Google OAuth) automatically logs in with a wrong cached account (like an old Hotmail cookie causing `AADSTS50020` Access Denied), call `await p.resetSiteAuth()` (or ask the user to click **`[🔄 換帳號]`** in the bottom-right capsule) to clear only that site's SSO cookies/storage and force `prompt=select_account`.
+4. Cookie Sovereignty: Export/import local cookies (including `HttpOnly`) via:
    - `tp-browser nodejs tools/cookies-export.ego.js > cookies.json`
    - `tp-browser nodejs tools/cookies-import.ego.js < cookies.json`

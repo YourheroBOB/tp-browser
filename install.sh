@@ -31,14 +31,15 @@ mkdir -p "$DATA_DIR" "$APP_DIR" "$BIN_DIR" "$DATA_DIR/profile-agent" "$DATA_DIR/
 chmod 700 "$DATA_DIR" 2>/dev/null || true
 
 # Copy fresh runtime
-rm -rf "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills"
-mkdir -p "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills/tp-browser"
+rm -rf "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills" "$APP_DIR/docs"
+mkdir -p "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills/tp-browser" "$APP_DIR/docs"
 cp "$SRC/bin/"*.js "$APP_DIR/bin/"
 cp "$SRC/daemon/"*.js "$APP_DIR/daemon/"
 cp "$SRC/lib/"*.js "$APP_DIR/lib/"
 cp "$SRC/scripts/"* "$APP_DIR/scripts/" 2>/dev/null || true
 cp "$SRC/tools/"*.js "$APP_DIR/tools/" 2>/dev/null || true
 cp "$SRC/tests/"*.mjs "$APP_DIR/tests/" 2>/dev/null || true
+cp "$SRC/docs/"* "$APP_DIR/docs/" 2>/dev/null || true
 [ -f "$SRC/skills/tp-browser/SKILL.md" ] && cp "$SRC/skills/tp-browser/SKILL.md" "$APP_DIR/skills/tp-browser/SKILL.md"
 [ -f "$SRC/package.json" ] && cp "$SRC/package.json" "$APP_DIR/"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$APP_DIR/"

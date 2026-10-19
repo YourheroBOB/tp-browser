@@ -67,7 +67,6 @@ async function attachChrome() {
       const cdp = new Cdp(wsUrl, 'chrome');
       await cdp.connect();
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
-      chromeReady = true;
       log('attached to Chromium:', wsUrl);
       cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
       await rebindSpaces();
@@ -82,6 +81,7 @@ async function attachChrome() {
           try { await hub.cdp.send('Target.closeTarget', { targetId: tid }); } catch {}
         }
       }
+      chromeReady = true;
       return;
     } catch {
       chromeReady = false;
@@ -130,6 +130,9 @@ writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chrome
 // ---------- SSE push channels ----------
 const sseClients = new Set();
 function broadcastPush(targetId, kind, payload) {
+  if (kind === 'coride' && payload?.action === 'resetSiteAuth') {
+    if (hub) hub.resetSiteAuth(targetId).catch(() => {});
+  }
   if (kind === 'coride' && payload?.mode) {
     const found = store.findByTargetId(targetId);
     if (found) {
@@ -205,6 +208,15 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
+    return;
+  }
+  if ((url.pathname === '/showcase' || url.pathname === '/docs') && req.method === 'GET') {
+    try {
+      const html = readFileSync(join(__dirname, '..', 'docs', 'index.html'), 'utf8');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html);
+    } catch (e) {
+      res.writeHead(404).end('Not found');
+    }
     return;
   }
   if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
@@ -536,6 +548,7 @@ async function pageCall(p) {
     }
     case 'takeChooser': result = h.takeChooser(tid); break;
     case 'events': result = h.events(tid); break;
+    case 'resetSiteAuth': result = await h.resetSiteAuth(tid); break;
     case 'pageCdp': result = await h.cdp.send(args[0], args[1] || {}, { sessionId: h.sessionOf(tid).sessionId, timeout: args[2]?.timeout || 30000 }); break;
     case 'close': {
       await h.cdp.send('Target.closeTarget', { targetId: tid });

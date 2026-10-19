@@ -559,9 +559,68 @@ footer{border-top:1px solid var(--paper-08); padding:44px 0 52px; background:var
       <div class="verdict">
         <p class="big reveal">單輪最高節省 <em>97.5%</em> Token · 雙機 12 輪總計節省 <em>91.7%</em> 瀏覽器 Token（相差 <s>12.0 倍</s>）<br>速度快 <em>4.2 ~ 9.5 倍</em></p>
         <p class="reveal" data-delay="1">
-          單項極限（Task 1）：A 組僅耗 64,955 ~ 189,099 Tokens（瀏覽器 44,827 ~ 94,015 Tokens）/ 4 Turns / 76.1 ~ 136.3 秒完美達成，對上 B 組 2,639,211 Tokens / 30 Turns / 720 秒超時。<br>
+          單項極限（Task 1）：A 組僅耗 64,955 ~ 189,099 Tokens（瀏覽器 44,827 ~ 94,015 Tokens）/ 4 Turns / 76.1 ~ 136.3 秒完美達成，對上 B 組（Playwright CDP / AX Tree + DOM Snapshot）2,639,211 Tokens / 30 Turns / 720 秒超時。<br>
           雙機 12 輪全量總計（PC + ROG × 3 Tasks）：A 組 6/6 (100%) 全數通過，總計 2,044,542 Tokens（瀏覽器操作僅 1,103,960 Tokens / 20 Browser Turns）；B 組 0/6 超時，總計高達 14,332,944 Tokens（瀏覽器操作高達 13,277,610 Tokens / 156 Browser Turns）。
         </p>
+      </div>
+
+      <!-- 五大業界流派橫向實測對標表 -->
+      <div class="tbl-scroll reveal" data-delay="2" style="margin-top:28px">
+        <table class="cmp">
+          <caption class="sr-only" style="position:absolute;left:-9999px">PC 與 ROG 雙機實測：五大瀏覽器操控流派橫向對標</caption>
+          <thead>
+            <tr>
+              <th scope="col">實測對標維度（PC + ROG 雙機）</th>
+              <th scope="col" class="tp-col">⚡ TooPower Browser<br><small style="opacity:.8">TaskSpace + 頁內語意精煉</small></th>
+              <th scope="col">🧩 Chrome 外掛流派<br><small style="opacity:.7">Claude in Chrome / Kimi 外掛</small></th>
+              <th scope="col">🔧 業界 CDP / AX Tree<br><small style="opacity:.7">@playwright/mcp / Browser-Use</small></th>
+              <th scope="col">🌐 傳統 CDP / Raw DOM<br><small style="opacity:.7">Puppeteer / outerHTML</small></th>
+              <th scope="col">📸 純視覺 Computer Use<br><small style="opacity:.7">每步截圖 + 座標點擊</small></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">底層擷取與互動機制</th>
+              <td class="tp-col"><span class="good">頁內 JS 雙向滾動 + 精準語意/檔案直出</span>（僅回傳高密度結果與短收據）</td>
+              <td>Manifest V3 <code>content_script</code> 讀單一前景分頁 + 側邊欄多輪重送 Context</td>
+              <td>每步動作後回傳整棵 <code>Accessibility.getFullAXTree</code>（數千個 <code>ref=eN</code> 節點）</td>
+              <td>每步拉取整頁 <code>outerHTML</code>（含 CSS class / SVG / React hydration 雜訊）</td>
+              <td>每步擷取 1080p/1440p PNG 全螢幕截圖 + 視覺座標推理</td>
+            </tr>
+            <tr>
+              <th scope="row">單頁觀察成本（中位數）</th>
+              <td class="tp-col"><span class="good">187 ~ 585 Tokens</span><br>（精簡語意 Snapshot）</td>
+              <td>3,500 ~ 12,000 Tokens<br>（含外掛 System Prompt 與全文重送）</td>
+              <td>8,500 ~ 65,000 Tokens<br>（長頁 AX Tree 節點暴增）</td>
+              <td>45,000 ~ 280,000 Tokens<br>（480KB~1.4MB 原始 HTML）</td>
+              <td>1,728 ~ 2,765 Vision Tokens / 張（不含滾動重試）</td>
+            </tr>
+            <tr>
+              <th scope="row">Task 1（PPX 3 篇長文懶加載）<br>瀏覽器 Token 實測</th>
+              <td class="tp-col"><span class="good">44,827 ~ 94,015 Tokens</span><br>（2 Browser Turns · 37~46s）</td>
+              <td>≈ 315,000 ~ 480,000 Tokens<br>（需人工逐一開分頁、虛擬列表易漏抓首輪）</td>
+              <td><span class="bad">708,505 ~ 1,385,244 Tokens</span><br>（滾動 15+ 次每步回傳整頁 AX Tree）</td>
+              <td><span class="bad">&gt; 2,800,000 Tokens</span><br>（單次滾動即塞爆 Context Window）</td>
+              <td><span class="bad">&gt; 1,100,000 Tokens</span><br>（需 45+ 張連續滾動截圖拼接）</td>
+            </tr>
+            <tr>
+              <th scope="row">PC + ROG 雙機 6 場複雜任務<br>總瀏覽器 Tokens / 完成率</th>
+              <td class="tp-col"><span class="good">1,103,960 Tokens · 6/6 (100%)</span><br>（比 CDP/AX 省 <b>88.6%~91.7%</b>）</td>
+              <td><span class="bad">0/6 自動化完成</span><br>（外掛無法由外部 CLI/SSH Agent 無人調度）</td>
+              <td><span class="bad">9,707,934 ~ 13,277,610 Tokens · 0/6</span><br>（卡死於 AX 快照膨脹與 Cloudflare 驗證）</td>
+              <td><span class="bad">&gt; 18,000,000 Tokens · 0/6</span><br>（Context 溢位中斷）</td>
+              <td><span class="bad">&gt; 6,500,000 Tokens · 0/6</span><br>（虛擬滾動座標偏移與驗證牆卡死）</td>
+            </tr>
+            <tr>
+              <th scope="row">外部 Agent 通用調度能力<br><small>(Claude Code / Cursor / Codex)</small></th>
+              <td class="tp-col"><span class="good">100% 原生支援</span><br>（標準 CLI + HTTP/SSE RPC + 自動裝 Skill）</td>
+              <td><span class="bad">封閉於瀏覽器側邊欄</span><br>（外部終端機 Agent 無法直接呼叫）</td>
+              <td>支援 MCP，但無常駐 <code>TaskSpace</code> 與反偵測偽裝</td>
+              <td>需手寫複雜腳本，無持久登入態管理</td>
+              <td>支援，但延遲極高且搶占人類螢幕焦點</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -619,45 +678,51 @@ footer{border-top:1px solid var(--paper-08); padding:44px 0 52px; background:var
     </blockquote>
     <div class="tbl-scroll reveal" data-delay="1">
       <table class="cmp">
-        <caption class="sr-only" style="position:absolute;left:-9999px">TooPower Browser、EGo Browser 與傳統 Playwright MCP 的市場定位對比</caption>
+        <caption class="sr-only" style="position:absolute;left:-9999px">TooPower Browser、Chrome 外掛、業界 CDP/AX Tree MCP 與 EGo Browser 的市場定位對比</caption>
         <thead>
           <tr>
             <th scope="col">項目</th>
             <th scope="col" class="tp-col">TooPower Browser</th>
+            <th scope="col">Chrome 外掛 (Claude / Kimi)</th>
+            <th scope="col">業界 CDP / AX Tree MCP</th>
             <th scope="col">EGo Browser</th>
-            <th scope="col">傳統 Playwright MCP</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <th scope="row">授權與價格</th>
-            <td class="tp-col"><span class="good">Apache-2.0 完全免費</span></td>
+            <td class="tp-col"><span class="good">Apache-2.0 完全免費開源</span></td>
+            <td>綁定各家訂閱配額且閉源</td>
+            <td>開源，但 <span class="bad">AX 快照 Token 黑洞</span></td>
             <td>macOS 桌面核心閉源 + Enterprise 定價</td>
-            <td>開源，但 <span class="bad">Token 黑洞</span></td>
           </tr>
           <tr>
-            <th scope="row">平台</th>
-            <td class="tp-col"><span class="good">Windows / Linux / macOS</span> 全制霸</td>
+            <th scope="row">平台與原貌體驗</th>
+            <td class="tp-col"><span class="good">Win / Linux / macOS 全制霸</span>（1:1 同步原生書籤列與小圖示）</td>
+            <td>跨平台，但受限 Chrome Web Store 沙箱權限</td>
+            <td>跨平台，但每次啟動空白無書籤無登入態視窗</td>
             <td>macOS 為主</td>
-            <td>跨平台</td>
           </tr>
           <tr>
-            <th scope="row">Cookie 主權</th>
-            <td class="tp-col"><span class="good">本機 0600 + ACL 鎖定</span>，100% 自持</td>
+            <th scope="row">Cookie 主權與反偵測</th>
+            <td class="tp-col"><span class="good">本機 0600 + Sec-CH-UA 原生偽裝</span>，免過驗證牆</td>
+            <td>共用瀏覽器 Cookie，但無背景隔離分頁</td>
+            <td><span class="bad">Headless 易撞 Cloudflare 驗證牆</span></td>
             <td>企業權限控管</td>
-            <td>無特別保護</td>
           </tr>
           <tr>
-            <th scope="row">Token 效率</th>
-            <td class="tp-col">單 Turn 批次執行，<span class="good">實測省 97.5%</span></td>
-            <td>—</td>
-            <td><span class="bad">每步截圖 + 全頁 DOM 快照</span></td>
+            <th scope="row">Token 效率（對標實測）</th>
+            <td class="tp-col">頁內批次過濾，<span class="good">比 CDP/AX 省 88.6%~97.5%</span></td>
+            <td>多輪對話重複夾帶頁面全文，無法跨頁批次收割</td>
+            <td><span class="bad">每步滾動回傳 5萬~12萬 Token AX 樹</span></td>
+            <td>高效率（僅限 Mac）</td>
           </tr>
           <tr>
-            <th scope="row">人機共乘</th>
-            <td class="tp-col"><span class="good">TaskSpace 一鍵有頭 / 無頭切換</span></td>
+            <th scope="row">人機共乘 Co-Riding</th>
+            <td class="tp-col"><span class="good">右下角常駐「🧑 我要接手」膠囊</span>（含新分頁控制台）</td>
+            <td>僅側邊欄問答，無 CLI Agent 接力機制</td>
+            <td>無（純自動化或純手動二選一）</td>
             <td>人機協作概念始祖</td>
-            <td>無</td>
           </tr>
         </tbody>
       </table>

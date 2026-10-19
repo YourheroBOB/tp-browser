@@ -105,6 +105,9 @@ if [ "$HEADED" -eq 1 ]; then
     --user-data-dir="$PROFILE_DIR" \
     --window-size=1440,900 \
     --disable-blink-features=AutomationControlled \
+    --disable-background-timer-throttling \
+    --disable-backgrounding-occluded-windows \
+    --disable-renderer-backgrounding \
     --noerrdialogs --disable-popup-blocking --disable-extensions \
     about:blank
 else
@@ -115,6 +118,9 @@ else
     --user-data-dir="$PROFILE_DIR" \
     --window-size=1440,900 \
     --disable-blink-features=AutomationControlled \
+    --disable-background-timer-throttling \
+    --disable-backgrounding-occluded-windows \
+    --disable-renderer-backgrounding \
     --noerrdialogs --disable-popup-blocking --disable-extensions \
     about:blank
 fi

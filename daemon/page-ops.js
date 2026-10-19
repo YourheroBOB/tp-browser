@@ -31,11 +31,13 @@ const CORIDE_BAR_SCRIPT = `Object.defineProperty(navigator, 'webdriver', { get: 
     const render = () => {
       const isHuman = mode === 'human';
       root.innerHTML = \`<style>
-        .bar { display:flex; align-items:center; gap:10px; background:rgba(18,16,14,0.96); border:1.5px solid \${isHuman ? '#7C8B6F' : '#C99A4B'}; color:#FAF6EE; padding:\${min ? '8px 12px' : '10px 16px'}; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }
+        .bar { display:flex; align-items:center; gap:8px; background:rgba(18,16,14,0.96); border:1.5px solid \${isHuman ? '#7C8B6F' : '#C99A4B'}; color:#FAF6EE; padding:\${min ? '8px 12px' : '10px 15px'}; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }
         .brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }
         .status { color:\${isHuman ? '#A8C296' : '#E6C786'}; font-size:12px; padding:3px 8px; border-radius:999px; background:\${isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)'}; }
-        button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 13px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:\${isHuman ? '#8FB379' : '#C99A4B'}; transition:transform 0.12s,filter 0.15s; }
+        button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 12px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:\${isHuman ? '#8FB379' : '#C99A4B'}; transition:transform 0.12s,filter 0.15s; }
         button.act:hover { filter:brightness(1.1); transform:translateY(-1px); }
+        button.sub { cursor:pointer; border:1px solid rgba(201,154,75,0.45); border-radius:999px; padding:5px 10px; font:600 11.5px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#E6C786; background:rgba(201,154,75,0.12); transition:background 0.15s; }
+        button.sub:hover { background:rgba(201,154,75,0.26); color:#FAF6EE; }
         button.min { cursor:pointer; border:none; background:transparent; color:#9E9589; font-size:13px; padding:2px 6px; }
         button.min:hover { color:#FAF6EE; }
       </style>
@@ -44,6 +46,7 @@ const CORIDE_BAR_SCRIPT = `Object.defineProperty(navigator, 'webdriver', { get: 
         \${min ? '' : \`
           <span class="status" id="tp-st">\${isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命'}</span>
           <button class="act" id="tp-btn">\${isHuman ? '🤖 完成並交還 Agent' : '🧑 我要接手操控'}</button>
+          <button class="sub" id="tp-reset-auth" title="清除本站舊登入 Cookie 並強制跳出帳號選擇器（解決 Hotmail/Google 自動帶錯帳號被擋）">🔄 換帳號</button>
         \`}
         <button class="min" id="tp-min" title="收合/展開">\${min ? '展開' : '—'}</button>
       </div>\`;
@@ -53,6 +56,11 @@ const CORIDE_BAR_SCRIPT = `Object.defineProperty(navigator, 'webdriver', { get: 
         sessionStorage.setItem('__tp_coride_mode', mode);
         try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ mode })); } catch {}
         render();
+      };
+      const rstBtn = root.getElementById('tp-reset-auth');
+      if (rstBtn) rstBtn.onclick = () => {
+        rstBtn.textContent = '清除中...';
+        try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ action: 'resetSiteAuth', url: location.href })); } catch {}
       };
       const minBtn = root.getElementById('tp-min');
       if (minBtn) minBtn.onclick = () => { min = !min; sessionStorage.setItem('__tp_coride_min', min ? '1' : '0'); render(); };
@@ -80,15 +88,73 @@ export class BrowserHub {
     this._wire();
   }
 
-  _ensureCoRideBar(sessionId, url) {
-    const u = String(url || '');
+  _ensureCoRideBar(st, isDomReady = false) {
+    if (!st) return;
+    const u = String(st.url || '');
     if (u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab-page') || u.startsWith('edge://newtab')) {
-      this.cdp.send('Page.navigate', { url: `http://127.0.0.1:${this.daemonPort}/newtab` }, { sessionId }).catch(() => {});
+      if (!st._newtabRedirectTimer && !st.agentNavigating) {
+        st._newtabRedirectTimer = setTimeout(() => {
+          st._newtabRedirectTimer = null;
+          const cur = String(st.url || '');
+          if (!st.agentNavigating && (cur.startsWith('chrome://newtab') || cur.startsWith('chrome://new-tab-page') || cur.startsWith('edge://newtab'))) {
+            this.cdp.send('Page.navigate', { url: `http://127.0.0.1:${this.daemonPort}/newtab` }, { sessionId: st.sessionId }).catch(() => {});
+          }
+        }, 250);
+      }
       return;
     }
-    if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('file://')) {
-      this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId }).catch(() => {});
+    if (isDomReady && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('file://'))) {
+      this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId: st.sessionId }).catch(() => {});
     }
+  }
+
+  async resetSiteAuth(targetId) {
+    const st = this.sessionOf(targetId);
+    const curUrl = st.url || (await this.evalIn(targetId, 'location.href').catch(() => '')) || '';
+    let host = '';
+    try { host = new URL(curUrl).hostname.toLowerCase(); } catch {}
+    const matchDomains = new Set();
+    if (host) {
+      matchDomains.add(host);
+      const parts = host.split('.');
+      if (parts.length >= 2) matchDomains.add(parts.slice(-2).join('.'));
+    }
+    if (/microsoft|live\.com|office|azure|hotmail/i.test(host)) {
+      for (const d of ['microsoftonline.com', 'live.com', 'microsoft.com', 'office.com', 'azure.com']) matchDomains.add(d);
+    }
+    if (/google|youtube|gmail/i.test(host)) {
+      for (const d of ['google.com', 'accounts.google.com', 'youtube.com']) matchDomains.add(d);
+    }
+    try {
+      const { cookies } = await this.cdp.send('Network.getAllCookies', {}, { sessionId: st.sessionId });
+      for (const c of cookies || []) {
+        const cd = String(c.domain || '').replace(/^\./, '').toLowerCase();
+        for (const md of matchDomains) {
+          if (cd === md || cd.endsWith('.' + md)) {
+            await this.cdp.send('Network.deleteCookies', { name: c.name, domain: c.domain, path: c.path }, { sessionId: st.sessionId }).catch(() => {});
+            break;
+          }
+        }
+      }
+    } catch {}
+    try {
+      if (curUrl.startsWith('http')) {
+        const origin = new URL(curUrl).origin;
+        await this.cdp.send('Storage.clearDataForOrigin', { origin, storageTypes: 'local_storage,session_storage,indexeddb' }, { sessionId: st.sessionId }).catch(() => {});
+      }
+    } catch {}
+    let nextUrl = curUrl;
+    try {
+      const u = new URL(curUrl);
+      if (/login\.microsoftonline\.com|accounts\.google\.com|login\.live\.com/i.test(u.hostname)) {
+        u.searchParams.set('prompt', 'select_account');
+        nextUrl = u.toString();
+      }
+    } catch {}
+    if (nextUrl) {
+      await this.cdp.send('Page.navigate', { url: nextUrl }, { sessionId: st.sessionId }).catch(() => {});
+    }
+    return { clearedDomains: [...matchDomains], url: nextUrl };
   }
 
   _wire() {
@@ -147,9 +213,18 @@ export class BrowserHub {
       this.sessions.set(targetInfo.targetId, st);
       const opts = { sessionId };
       await Promise.all(['Page.enable', 'Runtime.enable', 'DOM.enable', 'Network.enable'].map((x) => this.cdp.send(x, {}, opts).catch(() => {})));
+      await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, opts).catch(() => {});
+      if (this._cleanUaPromise) {
+        this._cleanUaPromise.then((uaInfo) => {
+          if (uaInfo && uaInfo.userAgent) {
+            this.cdp.send('Network.setUserAgentOverride', { userAgent: uaInfo.userAgent, userAgentMetadata: uaInfo.userAgentMetadata }, opts).catch(() => {});
+            st.uaCleaned = true;
+          }
+        }).catch(() => {});
+      }
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
       await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
-      this._ensureCoRideBar(sessionId, st.url);
+      this._ensureCoRideBar(st, true);
       return;
     }
     if (method === 'Target.targetCreated') {
@@ -191,16 +266,16 @@ export class BrowserHub {
           st.mainFrameId = params.frame.id;
           st.url = params.frame.url || '';
           if (params.frame.name) st.title = params.frame.name;
-          this._ensureCoRideBar(st.sessionId, st.url);
+          this._ensureCoRideBar(st, false);
         }
         return;
       case 'Page.domContentEventFired':
       case 'Page.loadEventFired':
-        this._ensureCoRideBar(st.sessionId, st.url);
+        this._ensureCoRideBar(st, true);
         return;
       case 'Page.navigatedWithinDocument':
         st.url = params.url;
-        this._ensureCoRideBar(st.sessionId, st.url);
+        this._ensureCoRideBar(st, true);
         return;
       case 'Page.downloadWillBegin':
         return;
@@ -271,8 +346,13 @@ export class BrowserHub {
   }
 
   // ---- goto / waits ----
-  async goto(targetId, url, { referer, timeout = 30000, waitUntil = 'load' } = {}) {
+  async goto(targetId, url, { referer, timeout = 30000, waitUntil = 'load', bringToFront } = {}) {
     const st = this.sessionOf(targetId);
+    st.agentNavigating = true;
+    if (st._newtabRedirectTimer) { clearTimeout(st._newtabRedirectTimer); st._newtabRedirectTimer = null; }
+    if (bringToFront || /login\.microsoftonline\.com|devicelogin|login\.live\.com|accounts\.google\.com|oauth2\/|signin/i.test(String(url || ''))) {
+      await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId }).catch(() => {});
+    }
     if (!st.uaCleaned && this._cleanUaPromise) {
       const uaInfo = await this._cleanUaPromise;
       if (uaInfo && uaInfo.userAgent) {

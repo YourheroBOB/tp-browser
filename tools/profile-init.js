@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // Automatically initializes `profile-agent/Default/Preferences` to always show the
-// native Bookmarks Bar (`bookmark_bar.show_on_all_tabs = true`) and imports the
-// user's existing local browser Bookmarks + Favicons (1:1 icon fidelity) into `profile-agent/Default/`.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+// native Bookmarks Bar (`bookmark_bar.show_on_all_tabs = true`), enable session persistence,
+// and import the user's existing local browser Bookmarks, Favicons, Saved Logins, Local Storage & IndexedDB.
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
 const home = homedir();
 const dataDir = process.env.EGO_LINUX_DATA_DIR || join(home, '.local', 'share', 'ego-linux');
-const profileDef = join(dataDir, 'profile-agent', 'Default');
+const profileRoot = join(dataDir, 'profile-agent');
+const profileDef = join(profileRoot, 'Default');
 mkdirSync(profileDef, { recursive: true });
 
-// 1. Force native Bookmarks Bar (`show_on_all_tabs: true`) in Default/Preferences
+// 1. Force native Bookmarks Bar (`show_on_all_tabs: true`) + Session Restore in Default/Preferences
 const prefsPath = join(profileDef, 'Preferences');
 let prefs = {};
 if (existsSync(prefsPath)) {
@@ -19,10 +20,16 @@ if (existsSync(prefsPath)) {
 }
 if (!prefs.bookmark_bar || typeof prefs.bookmark_bar !== 'object') prefs.bookmark_bar = {};
 prefs.bookmark_bar.show_on_all_tabs = true;
+if (!prefs.session || typeof prefs.session !== 'object') prefs.session = {};
+prefs.session.restore_on_startup = 1;
 if (!prefs.profile || typeof prefs.profile !== 'object') prefs.profile = {};
 if (!prefs.profile.name || prefs.profile.name === 'Person 1' || prefs.profile.name === '第一位使用者') {
   prefs.profile.name = '⚡ TooPower';
 }
+prefs.profile.exit_type = 'Normal';
+prefs.profile.exited_cleanly = true;
+prefs.credentials_enable_service = true;
+prefs.credentials_enable_autosignin = true;
 try {
   writeFileSync(prefsPath, JSON.stringify(prefs), 'utf8');
 } catch {}
@@ -42,10 +49,24 @@ function fileSize(file) {
   try { return existsSync(file) ? statSync(file).size : 0; } catch { return 0; }
 }
 
+function dirSize(dir) {
+  if (!existsSync(dir)) return 0;
+  let total = 0;
+  try {
+    for (const f of readdirSync(dir)) {
+      try {
+        const st = statSync(join(dir, f));
+        if (st.isFile()) total += st.size;
+      } catch {}
+    }
+  } catch {}
+  return total;
+}
+
 const dstBookmarks = join(profileDef, 'Bookmarks');
 const dstAccountBookmarks = join(profileDef, 'AccountBookmarks');
 const dstFavicons = join(profileDef, 'Favicons');
-const forceSync = process.argv.includes('--force');
+const forceSync = process.argv.includes('--force') || process.argv.includes('--sync-auth');
 
 const candidates = [];
 const addRoot = (baseDir) => {
@@ -59,7 +80,7 @@ const addRoot = (baseDir) => {
     for (const bmName of ['Bookmarks', 'AccountBookmarks']) {
       const f = join(profDir, bmName);
       if (existsSync(f)) {
-        candidates.push({ bmFile: f, profDir, favFile: join(profDir, 'Favicons') });
+        candidates.push({ bmFile: f, profDir, baseDir, favFile: join(profDir, 'Favicons') });
       }
     }
   }
@@ -92,12 +113,12 @@ let bestScore = 0;
 for (const c of candidates) {
   const n = countBookmarks(c.bmFile);
   if (n <= 0) continue;
-  // Score combines bookmark count + whether Favicons DB exists and is populated
   const favSz = fileSize(c.favFile);
-  const score = n * 1000 + (favSz > 100000 ? 500 : 0);
+  const lsSz = dirSize(join(c.profDir, 'Local Storage', 'leveldb'));
+  const score = n * 1000 + (favSz > 100000 ? 500 : 0) + (lsSz > 500000 ? 300 : 0);
   if (score > bestScore) {
     bestScore = score;
-    bestCandidate = { ...c, count: n, favSz };
+    bestCandidate = { ...c, count: n, favSz, lsSz };
   }
 }
 
@@ -122,4 +143,87 @@ if (bestCandidate) {
       console.log(`Synced Favicons DB (${Math.round(bestCandidate.favSz / 1024)} KB) from: ${bestCandidate.favFile}`);
     } catch {}
   }
+
+  // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
+  for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {
+    const srcDb = join(bestCandidate.profDir, dbName);
+    const dstDb = join(profileDef, dbName);
+    const srcSz = fileSize(srcDb);
+    const dstSz = fileSize(dstDb);
+    if (srcSz > 0 && (forceSync || dstSz < srcSz * 0.5)) {
+      try {
+        for (const ext of ['-journal', '-wal', '-shm']) {
+          try { if (existsSync(dstDb + ext)) unlinkSync(dstDb + ext); } catch {}
+        }
+        copyFileSync(srcDb, dstDb);
+      } catch {}
+    }
+  }
+
+  // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny
+  const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
+    ? join(bestCandidate.profDir, 'Network', 'Cookies')
+    : join(bestCandidate.profDir, 'Cookies');
+  const dstCookiesDir = process.platform === 'win32' ? join(profileDef, 'Network') : profileDef;
+  const dstCookies = join(dstCookiesDir, 'Cookies');
+  if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
+    try {
+      mkdirSync(dstCookiesDir, { recursive: true });
+      for (const ext of ['-journal', '-wal', '-shm']) {
+        try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
+      }
+      copyFileSync(srcCookies, dstCookies);
+      const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
+      const dstLocalStatePath = join(profileRoot, 'Local State');
+      if (existsSync(srcLocalStatePath)) {
+        const srcLs = JSON.parse(readFileSync(srcLocalStatePath, 'utf8'));
+        let dstLs = {};
+        if (existsSync(dstLocalStatePath)) {
+          try { dstLs = JSON.parse(readFileSync(dstLocalStatePath, 'utf8')); } catch { dstLs = {}; }
+        }
+        if (srcLs.os_crypt) {
+          dstLs.os_crypt = srcLs.os_crypt;
+          writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
+        }
+      }
+    } catch {}
+  }
+
+  // Sync Local Storage leveldb if profile-agent Local Storage is empty/small (< 2 MB vs larger source)
+  const srcLsDir = join(bestCandidate.profDir, 'Local Storage', 'leveldb');
+  const dstLsDir = join(profileDef, 'Local Storage', 'leveldb');
+  const srcLsSz = dirSize(srcLsDir);
+  const dstLsSz = dirSize(dstLsDir);
+  if (srcLsSz > 0 && (forceSync || (dstLsSz < 1500000 && dstLsSz < srcLsSz * 0.3))) {
+    try {
+      mkdirSync(dstLsDir, { recursive: true });
+      for (const f of readdirSync(srcLsDir)) {
+        if (f === 'LOCK') continue;
+        try { copyFileSync(join(srcLsDir, f), join(dstLsDir, f)); } catch {}
+      }
+      console.log(`Synced Local Storage (${Math.round(srcLsSz / 1024)} KB) from: ${srcLsDir}`);
+    } catch {}
+  }
+
+  // Sync missing https_* IndexedDB origins from primary browser into profile-agent
+  const srcIdbDir = join(bestCandidate.profDir, 'IndexedDB');
+  const dstIdbDir = join(profileDef, 'IndexedDB');
+  if (existsSync(srcIdbDir)) {
+    try {
+      mkdirSync(dstIdbDir, { recursive: true });
+      for (const entry of readdirSync(srcIdbDir)) {
+        if (!entry.startsWith('https_')) continue;
+        const dstEntry = join(dstIdbDir, entry);
+        if (!existsSync(dstEntry)) {
+          try {
+            cpSync(join(srcIdbDir, entry), dstEntry, {
+              recursive: true,
+              filter: (src) => !src.endsWith('LOCK'),
+            });
+          } catch {}
+        }
+      }
+    } catch {}
+  }
 }
+

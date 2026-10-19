@@ -74,6 +74,10 @@ if [ "$RESTART" -eq 0 ]; then
   fi
 fi
 
+# Flush active cookies & storage and gracefully close Chrome via CDP before stopping
+curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
+sleep 1.0
+
 # Stop existing TP Browser processes for this profile/daemon
 pkill -f "ego-browserd.js" 2>/dev/null || true
 pkill -f "tp-browserd.js" 2>/dev/null || true

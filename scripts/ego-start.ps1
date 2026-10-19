@@ -98,7 +98,10 @@ if (-not $Restart) {
     } catch {}
 }
 
-# 4. Stop existing Windows TP Browser processes (only profile-agent & ego-browserd.js; NEVER touch user's normal browser!)
+# 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes
+try { Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+Start-Sleep -Milliseconds 1000
+
 Get-CimInstance Win32_Process | Where-Object {
     ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
     ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")

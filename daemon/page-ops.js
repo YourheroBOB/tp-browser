@@ -2,12 +2,59 @@
 // All actions map to the ego-browser Page API surface (see references/api.md).
 import { once } from './cdp.js';
 import { parseChord, keyDescriptor, modifierBit } from './keys.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INPAGE_SRC = readFileSync(join(__dirname, 'inpage.agent.js'), 'utf8');
+const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
+const COOKIES_VAULT_PATH = join(DATA_DIR, 'cookies-vault.json');
+const STORAGE_VAULT_PATH = join(DATA_DIR, 'storage-vault.json');
+const TABS_VAULT_PATH = join(DATA_DIR, 'session-tabs.json');
+
+function cookieKey(c) {
+  return `${c.name || ''}|${c.domain || ''}|${c.path || '/'}`;
+}
+
+function toCookieParam(c) {
+  const host = String(c?.domain || '').replace(/^\./, '');
+  if (!host || !c?.name || typeof c.value !== 'string') return null;
+  const isHostPrefix = String(c.name).startsWith('__Host-');
+  const isSecurePrefix = String(c.name).startsWith('__Secure-');
+  const secure = Boolean(c.secure || isHostPrefix || isSecurePrefix || c.sameSite === 'None');
+  const path = isHostPrefix ? '/' : (c.path || '/');
+  const url = (secure ? 'https://' : 'http://') + host + path;
+  const now = Math.floor(Date.now() / 1000);
+  const expires = (!c.expires || c.expires <= 0 || c.session) ? (now + 30 * 86400) : c.expires;
+  if (expires <= now) return null;
+  const param = {
+    name: c.name,
+    value: c.value,
+    url,
+    path,
+    secure,
+    httpOnly: Boolean(c.httpOnly),
+    expires,
+  };
+  if (!isHostPrefix && c.domain) {
+    param.domain = c.domain;
+  }
+  if (c.sameSite && ['Strict', 'Lax', 'None'].includes(c.sameSite)) {
+    param.sameSite = c.sameSite;
+  }
+  if (c.priority && ['Low', 'Medium', 'High'].includes(c.priority)) {
+    param.priority = c.priority;
+  }
+  if (c.partitionKey && typeof c.partitionKey === 'object' && typeof c.partitionKey.topLevelSite === 'string') {
+    param.partitionKey = {
+      topLevelSite: c.partitionKey.topLevelSite,
+      hasCrossSiteAncestor: Boolean(c.partitionKey.hasCrossSiteAncestor),
+    };
+  }
+  return param;
+}
 
 export class EgoError extends Error {
   constructor(name, message) { super(message); this.name = name; }
@@ -30,10 +77,37 @@ const CORIDE_BAR_SCRIPT = `(function(){
       }
     } catch {}
   }
+  function syncTpStorage() {
+    try {
+      if (location.protocol !== 'https:' || typeof window.__tpCoRideAction !== 'function') return;
+      const ls = [];
+      const ss = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && !k.startsWith('__tp_coride_')) {
+          const v = localStorage.getItem(k);
+          if (typeof v === 'string' && v.length < 65536) ls.push([k, v]);
+        }
+      }
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && !k.startsWith('__tp_coride_')) {
+          const v = sessionStorage.getItem(k);
+          if (typeof v === 'string' && v.length < 65536) ss.push([k, v]);
+        }
+      }
+      if (ls.length === 0 && ss.length === 0) return;
+      const sig = ls.length + ':' + ss.length + ':' + ls.map(x => x[0].length + ':' + x[1].length).join(',') + '|' + ss.map(x => x[0].length + ':' + x[1].length).join(',');
+      if (window.__tpLastStorageSig === sig) return;
+      window.__tpLastStorageSig = sig;
+      window.__tpCoRideAction(JSON.stringify({ action: 'syncStorage', origin: location.origin, ls, ss }));
+    } catch {}
+  }
   function mountTpBar() {
     try {
       if (document.readyState === 'loading' || !document.body) return;
       syncTpTitle();
+      syncTpStorage();
       const parent = document.body;
       if (!parent || document.getElementById('__tp_coride_host')) return;
       const host = document.createElement('div');
@@ -149,8 +223,13 @@ export class BrowserHub {
     this.sessions = new Map(); // targetId -> {sessionId, mainFrameId, frames:Set, net:Set, title, url, modBits}
     this.downloads = new Map(); // guid -> record
     this.popupsSeen = []; // {targetId, openerId, at}
+    this.cookieVault = new Map(); // cookieKey -> cookie
+    this.storageVault = {}; // origin -> { ls: [[k,v]], ss: [[k,v]], updatedAt }
+    this._loadVaultsFromDisk();
     this._wire();
+    this._sweepTick = 0;
     this._sweepTimer = setInterval(() => {
+      this._sweepTick++;
       const now = Date.now();
       const totalTabs = this.sessions.size;
       for (const [tid, st] of this.sessions) {
@@ -171,8 +250,216 @@ export class BrowserHub {
           this._ensureCoRideBar(st, true);
         }
       }
+      if (this._sweepTick % 2 === 0) {
+        this.syncVaultNow().catch(() => {});
+      }
     }, 2000);
     if (this._sweepTimer.unref) this._sweepTimer.unref();
+  }
+
+  _loadVaultsFromDisk() {
+    try {
+      if (existsSync(COOKIES_VAULT_PATH)) {
+        const raw = JSON.parse(readFileSync(COOKIES_VAULT_PATH, 'utf8'));
+        const list = Array.isArray(raw) ? raw : (raw.cookies || []);
+        const now = Math.floor(Date.now() / 1000);
+        for (const c of list) {
+          if (!c || !c.name || !c.domain) continue;
+          if (!c.expires || c.expires <= 0 || c.session) {
+            c.expires = now + 30 * 86400;
+            c.session = false;
+          }
+          if (c.expires > now) {
+            this.cookieVault.set(cookieKey(c), c);
+          }
+        }
+      }
+    } catch {}
+    try {
+      if (existsSync(STORAGE_VAULT_PATH)) {
+        const raw = JSON.parse(readFileSync(STORAGE_VAULT_PATH, 'utf8'));
+        if (raw && typeof raw === 'object') {
+          this.storageVault = raw;
+        }
+      }
+    } catch {}
+  }
+
+  _persistCookieVault() {
+    try {
+      const cookies = [...this.cookieVault.values()];
+      writeFileSync(COOKIES_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), cookies }), { mode: 0o600 });
+    } catch {}
+  }
+
+  _persistStorageVault() {
+    try {
+      writeFileSync(STORAGE_VAULT_PATH, JSON.stringify(this.storageVault), { mode: 0o600 });
+    } catch {}
+  }
+
+  _buildStoragePreloadScript() {
+    const json = JSON.stringify(this.storageVault || {});
+    return `(function(){
+      try {
+        if (location.protocol !== 'https:') return;
+        const vault = ${json};
+        const entry = vault[location.origin];
+        if (!entry) return;
+        if (Array.isArray(entry.ls)) {
+          for (const [k, v] of entry.ls) {
+            if (typeof k === 'string' && typeof v === 'string' && localStorage.getItem(k) === null) {
+              localStorage.setItem(k, v);
+            }
+          }
+        }
+        if (Array.isArray(entry.ss)) {
+          for (const [k, v] of entry.ss) {
+            if (typeof k === 'string' && typeof v === 'string' && sessionStorage.getItem(k) === null) {
+              sessionStorage.setItem(k, v);
+            }
+          }
+        }
+      } catch {}
+    })();`;
+  }
+
+  _injectOriginStorageIfPresent(st) {
+    try {
+      if (!st || st.isPopup) return;
+      const u = String(st.url || '');
+      if (!u.startsWith('https://')) return;
+      const origin = new URL(u).origin;
+      const entry = this.storageVault[origin];
+      if (!entry) return;
+      const expr = `(function(){
+        try {
+          const entry = ${JSON.stringify(entry)};
+          let restored = 0;
+          if (Array.isArray(entry.ls)) {
+            for (const [k, v] of entry.ls) {
+              if (typeof k === 'string' && typeof v === 'string' && localStorage.getItem(k) === null) {
+                localStorage.setItem(k, v);
+                restored++;
+              }
+            }
+          }
+          if (Array.isArray(entry.ss)) {
+            for (const [k, v] of entry.ss) {
+              if (typeof k === 'string' && typeof v === 'string' && sessionStorage.getItem(k) === null) {
+                sessionStorage.setItem(k, v);
+                restored++;
+              }
+            }
+          }
+          return restored;
+        } catch { return 0; }
+      })();`;
+      this.cdp.send('Runtime.evaluate', { expression: expr }, { sessionId: st.sessionId }).catch(() => {});
+    } catch {}
+  }
+
+  async restoreVaultToBrowser() {
+    try {
+      const params = [];
+      for (const c of this.cookieVault.values()) {
+        const p = toCookieParam(c);
+        if (p) params.push(p);
+      }
+      if (params.length > 0) {
+        await this.cdp.send('Storage.setCookies', { cookies: params });
+      }
+    } catch {}
+  }
+
+  async syncVaultNow() {
+    if (this._syncingVault) return;
+    this._syncingVault = true;
+    try {
+      const { cookies } = await this.cdp.send('Storage.getCookies', {});
+      if (Array.isArray(cookies) && cookies.length > 0) {
+        const now = Math.floor(Date.now() / 1000);
+        const toPromote = [];
+        let changed = false;
+        for (const c of cookies) {
+          if (!c || !c.name || !c.domain) continue;
+          const isSession = !c.expires || c.expires <= 0 || c.session;
+          if (isSession) {
+            c.expires = now + 30 * 86400;
+            c.session = false;
+            const p = toCookieParam(c);
+            if (p) toPromote.push(p);
+            changed = true;
+          }
+          const key = cookieKey(c);
+          const prev = this.cookieVault.get(key);
+          if (!prev || prev.value !== c.value || Math.abs((prev.expires || 0) - (c.expires || 0)) > 60) {
+            this.cookieVault.set(key, c);
+            changed = true;
+          }
+        }
+        if (toPromote.length > 0) {
+          await this.cdp.send('Storage.setCookies', { cookies: toPromote }).catch(() => {});
+        }
+        if (changed) {
+          this._persistCookieVault();
+        }
+      }
+      // Also record open user https:// tabs (excluding login/oauth interstitials)
+      const openUrls = [];
+      const seen = new Set();
+      for (const [, st] of this.sessions) {
+        if (st.isPopup) continue;
+        const u = String(st.url || '');
+        if (!u.startsWith('https://')) continue;
+        if (/login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com|\/oauth|\/signin|\/login/i.test(u)) continue;
+        if (!seen.has(u)) {
+          seen.add(u);
+          openUrls.push({ url: u, title: st.title || '' });
+        }
+      }
+      if (openUrls.length > 0) {
+        writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
+      }
+    } catch {} finally {
+      this._syncingVault = false;
+    }
+  }
+
+  getSavedTabs() {
+    try {
+      if (existsSync(TABS_VAULT_PATH)) {
+        const raw = JSON.parse(readFileSync(TABS_VAULT_PATH, 'utf8'));
+        return Array.isArray(raw?.tabs) ? raw.tabs : [];
+      }
+    } catch {}
+    return [];
+  }
+
+  _handleStorageSync(payload) {
+    try {
+      const origin = String(payload?.origin || '');
+      if (!origin.startsWith('https://')) return;
+      const prev = this.storageVault[origin] || { ls: [], ss: [] };
+      const lsMap = new Map(Array.isArray(prev.ls) ? prev.ls : []);
+      const ssMap = new Map(Array.isArray(prev.ss) ? prev.ss : []);
+      if (Array.isArray(payload.ls)) {
+        for (const [k, v] of payload.ls) {
+          if (typeof k === 'string' && typeof v === 'string') lsMap.set(k, v);
+        }
+      }
+      if (Array.isArray(payload.ss)) {
+        for (const [k, v] of payload.ss) {
+          if (typeof k === 'string' && typeof v === 'string') ssMap.set(k, v);
+        }
+      }
+      this.storageVault[origin] = {
+        updatedAt: new Date().toISOString(),
+        ls: [...lsMap.entries()],
+        ss: [...ssMap.entries()],
+      };
+      this._persistStorageVault();
+    } catch {}
   }
 
   _ensureCoRideBar(st, isDomReady = false) {
@@ -194,6 +481,7 @@ export class BrowserHub {
       return;
     }
     if (isDomReady) {
+      this._injectOriginStorageIfPresent(st);
       this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId: st.sessionId }).catch(() => {});
     }
   }
@@ -216,7 +504,7 @@ export class BrowserHub {
       for (const d of ['google.com', 'accounts.google.com', 'youtube.com']) matchDomains.add(d);
     }
     try {
-      const { cookies } = await this.cdp.send('Network.getAllCookies', {}, { sessionId: st.sessionId });
+      const { cookies } = await this.cdp.send('Storage.getCookies', {});
       for (const c of cookies || []) {
         const cd = String(c.domain || '').replace(/^\./, '').toLowerCase();
         for (const md of matchDomains) {
@@ -227,6 +515,29 @@ export class BrowserHub {
         }
       }
     } catch {}
+    // Also purge matching domains from Cookie Vault & Storage Vault so old account is not re-injected
+    for (const [k, c] of this.cookieVault.entries()) {
+      const cd = String(c.domain || '').replace(/^\./, '').toLowerCase();
+      for (const md of matchDomains) {
+        if (cd === md || cd.endsWith('.' + md)) {
+          this.cookieVault.delete(k);
+          break;
+        }
+      }
+    }
+    this._persistCookieVault();
+    for (const orig of Object.keys(this.storageVault)) {
+      try {
+        const oh = new URL(orig).hostname.toLowerCase();
+        for (const md of matchDomains) {
+          if (oh === md || oh.endsWith('.' + md)) {
+            delete this.storageVault[orig];
+            break;
+          }
+        }
+      } catch {}
+    }
+    this._persistStorageVault();
     try {
       if (curUrl.startsWith('http')) {
         const origin = new URL(curUrl).origin;
@@ -334,6 +645,7 @@ export class BrowserHub {
         }).catch(() => {});
       }
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
+      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: this._buildStoragePreloadScript() }, opts).catch(() => {});
       await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
       if (isAlreadyLoaded) {
         this._ensureCoRideBar(st, true);
@@ -384,13 +696,18 @@ export class BrowserHub {
           st.url = params.frame.url || '';
           st.domReady = false;
           if (params.frame.name) st.title = params.frame.name;
+          this._injectOriginStorageIfPresent(st);
           this._ensureCoRideBar(st, false);
         }
         return;
       case 'Page.domContentEventFired':
+        st.domReady = true;
+        this._ensureCoRideBar(st, true);
+        return;
       case 'Page.loadEventFired':
         st.domReady = true;
         this._ensureCoRideBar(st, true);
+        this.syncVaultNow().catch(() => {});
         return;
       case 'Page.navigatedWithinDocument':
         st.url = params.url;
@@ -424,7 +741,14 @@ export class BrowserHub {
         return;
       case 'Runtime.bindingCalled':
         if (params.name === '__tpCoRideAction') {
-          try { this.onPush(tid, 'coride', JSON.parse(params.payload || '{}')); } catch {}
+          try {
+            const payload = JSON.parse(params.payload || '{}');
+            if (payload?.action === 'syncStorage') {
+              this._handleStorageSync(payload);
+            } else {
+              this.onPush(tid, 'coride', payload);
+            }
+          } catch {}
         }
         return;
       default:

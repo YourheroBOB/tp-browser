@@ -69,7 +69,9 @@ async function attachChrome() {
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
       log('attached to Chromium:', wsUrl);
       cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
-      // wait for auto-attach to deliver existing targets first, then prune dead spaces & blank tabs
+      // Restore persistent + promoted session cookies from vault before any navigation
+      await hub.restoreVaultToBrowser();
+      // wait for target discovery to deliver existing targets first, then prune dead spaces & blank tabs
       await new Promise((r) => setTimeout(r, 800));
       await rebindSpaces();
       const realTabs = [];
@@ -98,6 +100,18 @@ async function attachChrome() {
           try { await hub.cdp.send('Target.closeTarget', { targetId: b.tid }); } catch {}
         }
       }
+      // In headed mode, if no https:// user tabs are open yet, restore saved https:// tabs from session-tabs.json
+      const isHeadless = Boolean(await hub._cleanUaPromise);
+      const httpsTabs = realTabs.filter((r) => String(r.st.url || '').startsWith('https://'));
+      if (!isHeadless && httpsTabs.length === 0) {
+        const savedTabs = hub.getSavedTabs();
+        for (const t of savedTabs.slice(0, 4)) {
+          if (t?.url && String(t.url).startsWith('https://')) {
+            try { await hub.cdp.send('Target.createTarget', { url: t.url }); } catch {}
+          }
+        }
+      }
+      await hub.syncVaultNow();
       chromeReady = true;
       return;
     } catch {
@@ -251,6 +265,16 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
+  if (url.pathname === '/flush-and-close') {
+    try {
+      if (hub) {
+        await hub.syncVaultNow().catch(() => {});
+        await hub.cdp.send('Browser.close').catch(() => {});
+      }
+    } catch {}
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, flushed: true }));
+    return;
+  }
   if (url.pathname === '/events') {
     if (!checkToken(req)) { res.writeHead(403).end('bad token'); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });

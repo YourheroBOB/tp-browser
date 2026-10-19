@@ -48,6 +48,7 @@ export class BrowserHub {
       const isMac = /Macintosh/i.test(userAgent);
       const platform = isWin ? 'Windows' : (isMac ? 'macOS' : 'Linux');
       const platformVersion = isWin ? '15.0.0' : (isMac ? '15.0.0' : '6.8.0');
+      const arch = isMac && process.arch === 'arm64' ? 'arm' : 'x86';
       const userAgentMetadata = {
         brands: [
           { brand: 'Not_A Brand', version: '24' },
@@ -61,7 +62,7 @@ export class BrowserHub {
         ],
         platform,
         platformVersion,
-        architecture: 'x86',
+        architecture: arch,
         model: '',
         mobile: false,
         bitness: '64',
@@ -537,6 +538,7 @@ export class BrowserHub {
     if (!info) throw new EgoError('ElementResolutionError', `page.setInputFiles: no file input resolves from ${selector}`);
     if (files.length > 1 && !info.multiple) throw new EgoError('NotSupportedError', 'input does not accept multiple files');
     const mark = await this.call(targetId, 'markForDom', JSON.stringify([r.hid]));
+    if (typeof mark !== 'string' || !/^ego-\d+$/.test(mark)) throw new EgoError('PageError', 'invalid DOM mark');
     const st = this.sessionOf(targetId);
     const doc = await this.cdp.send('DOM.getDocument', { depth: 0 }, { sessionId: st.sessionId });
     const node = await this.cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: `[data-ego-dom="${mark}"]` }, { sessionId: st.sessionId });

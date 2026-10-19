@@ -1,13 +1,25 @@
 {
-  "name": "ego-linux",
-  "version": "0.1.0",
-  "description": "ego-browser compatible agent browser for Linux (daemon + CLI over CDP, zero dependencies)",
+  "name": "tp-browser",
+  "version": "0.3.0",
+  "description": "TooPower Browser (強到沒朋友) — Free, open-source, zero-dependency Agent & Human-Agent shared browser for Windows, Linux, and macOS over native CDP",
   "type": "module",
   "bin": {
+    "tp-browser": "bin/tp-browser.js",
+    "tp-browserd": "daemon/tp-browserd.js",
     "ego-browser": "bin/ego-browser.js",
     "ego-browserd": "daemon/ego-browserd.js"
   },
   "engines": { "node": ">=22" },
-  "license": "MIT",
-  "private": true
+  "license": "Apache-2.0",
+  "keywords": [
+    "toopower",
+    "tp-browser",
+    "agent-browser",
+    "cdp",
+    "human-in-the-loop",
+    "taskspace",
+    "windows",
+    "linux",
+    "macos"
+  ]
 }

@@ -1,0 +1,33 @@
+TooPower Browser (tp-browser) — 強到沒朋友
+Copyright 2026 TooPower Open Source Project (YourheroBOB)
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+=========================================================================
+ Attribution & Conceptual Inspiration Notice
+=========================================================================
+This product includes original, clean-room software developed by the
+TooPower Open Source Project (https://github.com/YourheroBOB/ego-linux):
+  - TooPower Browser (`tp-browser` / `tp-browserd`) — Zero-dependency,
+    cross-platform (Windows, Linux, macOS) Agent & Human-Agent shared
+    browser engine built on Node.js 22 native WebSocket and Chrome
+    DevTools Protocol (CDP).
+
+Conceptual Inspiration Acknowledgment:
+  TooPower Browser is conceptually inspired by the TaskSpace and batch
+  JavaScript execution paradigm pioneered by EGo Browser (https://lite.ego.app/
+  by Citro Labs). While EGo Browser focuses on a macOS desktop experience and
+  enterprise security/governance controls, TooPower Browser is an independent,
+  100% open-source implementation written from scratch to empower consumers
+  and developers across Windows, Linux, and macOS with full local cookie
+  sovereignty and zero external dependencies.

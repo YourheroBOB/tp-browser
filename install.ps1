@@ -5,8 +5,9 @@ $InstallDir = Join-Path $HOME "ego-linux-install"
 $LocalBin = Join-Path $HOME ".local\bin"
 $HomeBin = Join-Path $HOME "bin"
 
-Write-Output "=== [1] Installing TP Browser (ego-win / ego-linux) to $DataDir ==="
+Write-Output "=== [1] Installing TooPower Browser (tp-browser / ego-win) to $DataDir ==="
 New-Item -ItemType Directory -Force -Path $DataDir, $InstallDir, $LocalBin, $HomeBin, (Join-Path $DataDir "profile-agent") | Out-Null
+try { & icacls $DataDir /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" | Out-Null } catch {}
 
 foreach ($d in @("bin", "daemon", "lib", "scripts", "tools", "tests")) {
     $src = Join-Path $RepoRoot $d

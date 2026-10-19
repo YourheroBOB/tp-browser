@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TooPower Browser — 強到沒朋友 | Agent 專用瀏覽器系統</title>
+<meta name="description" content="業界首款 100% 免費開源（Apache-2.0）、零外部依賴、橫跨 Windows / Linux / macOS 的 Agent 專用與人機協作共用瀏覽器系統。">
+<style>
+/* ============ 基底與設計代幣 ============ */
+:root{
+  --ink-0:#12100D; --ink-1:#1A1712; --ink-2:#3B352C;
+  --amber:#C99A4B; --amber-dim:rgba(201,154,75,.28);
+  --grass:#7C8B6F; --grass-hi:#9DB08C;
+  --cinnabar:#C05B4B; --cinnabar-hi:#D97C6B;
+  --paper:#FAF6EE;
+  --paper-70:rgba(250,246,238,.7); --paper-55:rgba(250,246,238,.55);
+  --paper-38:rgba(250,246,238,.38); --paper-18:rgba(250,246,238,.18);
+  --paper-08:rgba(250,246,238,.08);
+  --mono:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  --radius:14px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{
+  background:var(--ink-0); color:var(--paper-70);
+  font-family:var(--sans); font-size:16px; line-height:1.75;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+/* 細格線 + 噪點 + 掃描光帶背景 */
+body::before{
+  content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
+  background-image:
+    linear-gradient(rgba(250,246,238,.028) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(250,246,238,.028) 1px,transparent 1px);
+  background-size:44px 44px;
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(1200px 500px at 50% -10%, rgba(201,154,75,.07), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(250,246,238,.012) 0 1px, transparent 1px 3px);
+}
+.scanband{
+  position:fixed; left:0; right:0; height:140px; z-index:0; pointer-events:none;
+  background:linear-gradient(180deg,transparent, rgba(201,154,75,.045), transparent);
+  animation:scan 9s linear infinite;
+}
+@keyframes scan{0%{top:-160px}100%{top:110%}}
+::selection{background:var(--amber); color:var(--ink-0)}
+a{color:var(--amber); text-decoration:none}
+a:hover{color:#E2BC77}
+code,kbd{font-family:var(--mono)}
+img,svg{display:block}
+:focus-visible{outline:2px solid var(--amber); outline-offset:3px; border-radius:4px}
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px; position:relative; z-index:1}
+section{padding:110px 0}
+/* 區塊標題 */
+.sec-tag{
+  font-family:var(--mono); font-size:13px; letter-spacing:.18em;
+  color:var(--amber); margin-bottom:14px; display:block;
+}
+.sec-title{
+  font-size:clamp(28px,4vw,44px); font-weight:800; color:var(--paper);
+  line-height:1.25; letter-spacing:.01em; margin-bottom:16px;
+}
+.sec-sub{color:var(--paper-55); max-width:720px; margin-bottom:48px; font-size:17px}
+/* ============ 導航列 ============ */
+.nav{
+  position:sticky; top:0; z-index:100;
+  background:rgba(18,16,13,.72); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--paper-08);
+}
+.nav-inner{display:flex; align-items:center; gap:28px; height:64px; max-width:1180px; margin:0 auto; padding:0 24px}
+.logo{font-family:var(--mono); font-size:18px; font-weight:700; color:var(--paper); letter-spacing:.02em}
+.logo b{color:var(--amber)}
+.logo .cursor{display:inline-block; width:9px; height:18px; background:var(--amber); vertical-align:-3px; margin-left:2px; animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.nav-links{display:flex; gap:22px; margin-left:auto; list-style:none}
+.nav-links a{color:var(--paper-55); font-size:14px; font-family:var(--mono); transition:color .2s}
+.nav-links a:hover{color:var(--amber)}
+.nav-cta{
+  font-family:var(--mono); font-size:13px; color:var(--ink-0); background:var(--amber);
+  padding:8px 16px; border-radius:8px; font-weight:700; display:inline-flex; align-items:center; gap:7px;
+  transition:transform .2s, box-shadow .2s;
+}
+.nav-cta:hover{transform:translateY(-1px); box-shadow:0 6px 22px var(--amber-dim); color:var(--ink-0)}
+.burger{display:none; background:none; border:1px solid var(--paper-18); border-radius:8px; padding:8px 10px; cursor:pointer; margin-left:auto}
+.burger span{display:block; width:20px; height:2px; background:var(--paper-70); margin:4px 0; transition:.25s}
+.burger[aria-expanded="true"] span:nth-child(1){transform:translateY(6px) rotate(45deg)}
+.burger[aria-expanded="true"] span:nth-child(2){opacity:0}
+.burger[aria-expanded="true"] span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
+/* ============ Hero ============ */
+.hero{min-height:calc(100vh - 64px); display:flex; align-items:center; position:relative; padding:80px 0 100px; overflow:hidden}
+.hero-svg{position:absolute; right:-120px; top:50%; transform:translateY(-50%); width:min(760px,62vw); opacity:.5; pointer-events:none; z-index:0}
+.hero-grid{display:grid; grid-template-columns:1.15fr .85fr; gap:40px; align-items:center}
+.hero-kicker{font-family:var(--mono); font-size:13px; letter-spacing:.22em; color:var(--grass-hi); margin-bottom:22px}
+.hero h1{
+  font-size:clamp(40px,7.2vw,84px); font-weight:900; color:var(--paper);
+  line-height:1.08; letter-spacing:-.01em; margin-bottom:10px;
+}
+.hero h1 .amber{color:var(--amber)}
+.hero-slogan{font-size:clamp(22px,3.4vw,38px); font-weight:800; color:var(--amber); margin-bottom:24px; min-height:1.4em}
+.type-caret{display:inline-block; width:.55em; height:1.05em; background:var(--amber); vertical-align:-.14em; margin-left:3px; animation:blink 1s steps(1) infinite}
+.hero-sub{color:var(--paper-55); font-size:17px; max-width:560px; margin-bottom:36px}
+.hero-sub b{color:var(--paper)}
+.hero-ctas{display:flex; gap:16px; flex-wrap:wrap}
+.btn{
+  display:inline-flex; align-items:center; gap:10px; font-weight:700; font-size:15px;
+  padding:14px 26px; border-radius:10px; transition:transform .2s, box-shadow .2s, background .2s; cursor:pointer;
+}
+.btn-primary{background:var(--amber); color:var(--ink-0); box-shadow:0 4px 26px var(--amber-dim)}
+.btn-primary:hover{transform:translateY(-2px); box-shadow:0 10px 34px rgba(201,154,75,.4); color:var(--ink-0)}
+.btn-ghost{border:1px solid var(--paper-18); color:var(--paper-70); background:rgba(250,246,238,.03)}
+.btn-ghost:hover{border-color:var(--amber); color:var(--amber); transform:translateY(-2px)}
+.hero-badges{display:flex; gap:10px; flex-wrap:wrap; margin-top:34px}
+.badge{
+  font-family:var(--mono); font-size:12px; color:var(--paper-55);
+  border:1px solid var(--paper-18); border-radius:999px; padding:5px 14px;
+}
+.badge i{font-style:normal; color:var(--grass-hi)}
+</style>
+<style>
+/* ============ 進場動畫 ============ */
+.reveal{opacity:0; transform:translateY(34px); transition:opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1; transform:none}
+.reveal[data-delay="1"]{transition-delay:.12s}.reveal[data-delay="2"]{transition-delay:.24s}
+.reveal[data-delay="3"]{transition-delay:.36s}.reveal[data-delay="4"]{transition-delay:.48s}
+/* ============ 核心價值卡片 ============ */
+.cards{display:grid; grid-template-columns:repeat(3,1fr); gap:22px}
+.card{
+  background:linear-gradient(160deg, var(--ink-1), rgba(26,23,18,.6));
+  border:1px solid var(--paper-08); border-radius:var(--radius); padding:30px 26px;
+  position:relative; overflow:hidden;
+  transition:transform .35s cubic-bezier(.2,.7,.2,1), border-color .35s, box-shadow .35s;
+}
+.card::before{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .35s;
+  background:radial-gradient(420px 220px at 50% -10%, rgba(201,154,75,.12), transparent 70%);
+}
+.card:hover{transform:translateY(-8px); border-color:var(--amber-dim); box-shadow:0 18px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(201,154,75,.15)}
+.card:hover::before{opacity:1}
+.card-num{font-family:var(--mono); font-size:12px; color:var(--paper-38); letter-spacing:.2em; margin-bottom:18px}
+.card-fig{margin-bottom:20px; height:120px; display:flex; align-items:center; justify-content:center}
+.card h3{color:var(--paper); font-size:20px; font-weight:800; margin-bottom:12px; line-height:1.4}
+.card p{font-size:14.5px; color:var(--paper-55)}
+.card p b, .card p code{color:var(--amber); font-weight:600}
+.card p .hl-g{color:var(--grass-hi); font-weight:700}
+/* ============ A/B 對照實測 ============ */
+.bench-head{display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap}
+.scale-toggle{display:inline-flex; border:1px solid var(--paper-18); border-radius:10px; overflow:hidden; margin-bottom:8px}
+.scale-toggle button{
+  font-family:var(--mono); font-size:13px; padding:9px 18px; cursor:pointer;
+  background:transparent; color:var(--paper-55); border:none; transition:.2s;
+}
+.scale-toggle button[aria-pressed="true"]{background:var(--amber); color:var(--ink-0); font-weight:700}
+.bench-panel{
+  background:var(--ink-1); border:1px solid var(--paper-08); border-radius:var(--radius);
+  padding:34px 30px 30px; margin-top:26px; position:relative; overflow:hidden;
+}
+.bench-panel::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(90deg, rgba(250,246,238,.02) 0 1px, transparent 1px 12.5%);
+}
+.bench-legend{display:flex; gap:26px; flex-wrap:wrap; margin-bottom:26px; font-family:var(--mono); font-size:13px}
+.bench-legend span{display:inline-flex; align-items:center; gap:8px; color:var(--paper-55)}
+.dot{width:12px; height:12px; border-radius:3px; display:inline-block}
+.dot-a{background:var(--grass)} .dot-b{background:var(--cinnabar)}
+.bars{display:flex; flex-direction:column; gap:26px; position:relative; z-index:1}
+.bar-row{display:grid; grid-template-columns:190px 1fr; gap:18px; align-items:center}
+.bar-label{font-family:var(--mono); font-size:13px; color:var(--paper-55); line-height:1.5}
+.bar-label b{display:block; color:var(--paper); font-size:14px}
+.bar-track{
+  position:relative; height:52px; background:rgba(250,246,238,.04);
+  border:1px solid var(--paper-08); border-radius:9px; overflow:hidden;
+}
+.bar-fill{
+  position:absolute; inset:2px auto 2px 2px; width:0%; border-radius:7px;
+  display:flex; align-items:center; justify-content:flex-end; padding-right:14px;
+  font-family:var(--mono); font-size:13px; font-weight:700; color:var(--ink-0);
+  transition:width 1.4s cubic-bezier(.16,.8,.24,1); min-width:0; white-space:nowrap;
+}
+.bar-fill.fill-a{background:linear-gradient(90deg,#5E6D53,var(--grass))}
+.bar-fill.fill-b{background:linear-gradient(90deg,#8F4237,var(--cinnabar))}
+.bar-fill .val{text-shadow:0 1px 2px rgba(0,0,0,.35)}
+.bar-fill.outside .val{position:absolute; left:calc(100% + 10px); color:var(--paper-70); text-shadow:none}
+.mini-bars{display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:34px}
+.mini-box{background:rgba(250,246,238,.03); border:1px solid var(--paper-08); border-radius:12px; padding:20px 22px}
+.mini-box h4{font-family:var(--mono); font-size:13px; color:var(--paper-55); letter-spacing:.1em; margin-bottom:16px}
+.mini-row{display:grid; grid-template-columns:92px 1fr 84px; gap:12px; align-items:center; margin-bottom:12px}
+.mini-row:last-child{margin-bottom:0}
+.mini-row .who{font-family:var(--mono); font-size:12px; color:var(--paper-55)}
+.mini-track{height:22px; background:rgba(250,246,238,.05); border-radius:6px; overflow:hidden}
+.mini-fill{height:100%; width:0%; border-radius:6px; transition:width 1.2s cubic-bezier(.16,.8,.24,1)}
+.mini-fill.fill-a{background:var(--grass)} .mini-fill.fill-b{background:var(--cinnabar)}
+.mini-num{font-family:var(--mono); font-size:13px; color:var(--paper); font-weight:700; text-align:right}
+.verdict{
+  margin-top:38px; text-align:center; padding:34px 24px;
+  border:1px dashed var(--amber-dim); border-radius:var(--radius);
+  background:radial-gradient(600px 200px at 50% 0%, rgba(201,154,75,.08), transparent 70%);
+}
+.verdict .big{
+  font-size:clamp(26px,4.6vw,48px); font-weight:900; color:var(--paper); line-height:1.3;
+}
+.verdict .big em{font-style:normal; color:var(--grass-hi)}
+.verdict .big s{text-decoration:none; color:var(--amber)}
+.verdict p{color:var(--paper-55); margin-top:10px; font-size:14.5px}
+/* ============ 資安審計（終端風） ============ */
+.audit-grid{display:grid; grid-template-columns:1fr 1fr; gap:26px; align-items:stretch}
+.terminal{
+  background:#0D0C0A; border:1px solid var(--paper-08); border-radius:var(--radius);
+  overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.45);
+}
+.term-bar{display:flex; align-items:center; gap:8px; padding:12px 16px; background:var(--ink-1); border-bottom:1px solid var(--paper-08)}
+.term-dot{width:11px; height:11px; border-radius:50%}
+.term-dot:nth-child(1){background:var(--cinnabar)} .term-dot:nth-child(2){background:var(--amber)} .term-dot:nth-child(3){background:var(--grass)}
+.term-title{font-family:var(--mono); font-size:12px; color:var(--paper-38); margin-left:10px}
+.term-body{padding:22px 20px; font-family:var(--mono); font-size:13.5px; line-height:2.05; color:var(--paper-70)}
+.term-body .ln{display:flex; gap:10px}
+.term-body .ok{color:var(--grass-hi); flex-shrink:0}
+.term-body .cmt{color:var(--paper-38)}
+.term-body .cmd{color:var(--amber)}
+.audit-side{display:flex; flex-direction:column; gap:18px; justify-content:center}
+.audit-stat{border-left:3px solid var(--amber); padding:6px 0 6px 20px}
+.audit-stat .n{font-family:var(--mono); font-size:34px; font-weight:800; color:var(--paper); line-height:1.15}
+.audit-stat .d{font-size:14px; color:var(--paper-55)}
+</style>
+<style>
+/* ============ 致敬 + 對比表 ============ */
+.tribute{
+  border:1px solid var(--paper-08); border-left:4px solid var(--amber);
+  background:var(--ink-1); border-radius:0 var(--radius) var(--radius) 0;
+  padding:26px 28px; margin-bottom:46px; color:var(--paper-55); font-size:15.5px;
+}
+.tribute b{color:var(--paper)}
+.tbl-scroll{overflow-x:auto; border:1px solid var(--paper-08); border-radius:var(--radius); background:var(--ink-1)}
+table.cmp{width:100%; min-width:760px; border-collapse:collapse; font-size:14.5px}
+.cmp th,.cmp td{padding:16px 18px; text-align:left; border-bottom:1px solid var(--paper-08); vertical-align:top}
+.cmp thead th{font-family:var(--mono); font-size:13px; letter-spacing:.06em; color:var(--paper-55); background:rgba(250,246,238,.03)}
+.cmp thead th.tp-col{color:var(--ink-0); background:var(--amber); font-weight:800}
+.cmp tbody th{font-family:var(--mono); font-size:12.5px; color:var(--paper-38); font-weight:500; width:150px}
+.cmp td{color:var(--paper-55)}
+.cmp td.tp-col{background:rgba(201,154,75,.07); color:var(--paper); border-left:1px solid var(--amber-dim); border-right:1px solid var(--amber-dim)}
+.cmp tbody tr:last-child td,.cmp tbody tr:last-child th{border-bottom:none}
+.cmp .good{color:var(--grass-hi); font-weight:700}
+.cmp .bad{color:var(--cinnabar-hi)}
+/* ============ 安裝分頁 ============ */
+.tabs{display:inline-flex; gap:6px; border:1px solid var(--paper-08); background:var(--ink-1); padding:6px; border-radius:12px; margin-bottom:22px; flex-wrap:wrap}
+.tab-btn{
+  font-family:var(--mono); font-size:14px; padding:10px 20px; border:none; border-radius:8px;
+  background:transparent; color:var(--paper-55); cursor:pointer; transition:.2s;
+}
+.tab-btn[aria-selected="true"]{background:var(--amber); color:var(--ink-0); font-weight:700}
+.tab-btn:not([aria-selected="true"]):hover{color:var(--paper)}
+.install-panel{
+  background:#0D0C0A; border:1px solid var(--paper-08); border-radius:var(--radius); overflow:hidden;
+}
+.install-cmd{display:flex; align-items:center; gap:14px; padding:20px 22px; flex-wrap:wrap}
+.install-cmd[hidden]{display:none}
+.install-cmd code{
+  font-family:var(--mono); font-size:13.5px; color:var(--grass-hi); word-break:break-all; flex:1; min-width:220px;
+  line-height:1.7;
+}
+.copy-btn{
+  font-family:var(--mono); font-size:13px; font-weight:700; cursor:pointer; flex-shrink:0;
+  background:var(--amber); color:var(--ink-0); border:none; border-radius:8px; padding:10px 18px;
+  transition:transform .2s, background .2s;
+}
+.copy-btn:hover{transform:translateY(-1px)}
+.copy-btn.copied{background:var(--grass); color:var(--ink-0)}
+.qstart{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:26px}
+.qstep{background:var(--ink-1); border:1px solid var(--paper-08); border-radius:12px; padding:20px}
+.qstep code{display:block; font-size:15px; color:var(--amber); margin-bottom:8px; font-weight:700}
+.qstep span{font-size:13.5px; color:var(--paper-55)}
+.license{
+  margin-top:44px; display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap;
+  border:1px dashed var(--paper-18); border-radius:var(--radius); padding:22px 26px;
+}
+.license .lic-name{font-family:var(--mono); font-weight:800; color:var(--paper); font-size:17px}
+.license p{font-size:13.5px; color:var(--paper-38); margin-top:4px}
+/* ============ Footer ============ */
+footer{border-top:1px solid var(--paper-08); padding:44px 0 52px; background:var(--ink-1)}
+.foot-inner{display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap}
+.foot-inner .f-left{font-size:13.5px; color:var(--paper-38); font-family:var(--mono)}
+.foot-inner .f-left b{color:var(--amber)}
+.foot-links{display:flex; gap:20px}
+.foot-links a{font-family:var(--mono); font-size:13px; color:var(--paper-55)}
+.foot-links a:hover{color:var(--amber)}
+.foot-tag{text-align:center; margin-top:26px; font-size:12px; color:var(--paper-18); letter-spacing:.3em; font-family:var(--mono)}
+/* ============ RWD ============ */
+@media (max-width:1023px){
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .hero-grid{grid-template-columns:1fr}
+  .hero-svg{opacity:.22; right:-200px}
+  .audit-grid{grid-template-columns:1fr}
+  .qstart{grid-template-columns:1fr 1fr}
+}
+@media (max-width:767px){
+  section{padding:76px 0}
+  .cards{grid-template-columns:1fr}
+  .qstart{grid-template-columns:1fr}
+  .mini-bars{grid-template-columns:1fr}
+  .nav-links{
+    display:none; position:absolute; top:64px; left:0; right:0; flex-direction:column; gap:0;
+    background:rgba(18,16,13,.97); border-bottom:1px solid var(--paper-08); padding:10px 24px 18px;
+  }
+  .nav-links.open{display:flex}
+  .nav-links a{display:block; padding:12px 0; font-size:15px}
+  .burger{display:block}
+  .nav-cta{display:none}
+  .bar-row{grid-template-columns:1fr; gap:8px}
+  .bar-track{height:44px}
+  .hero{min-height:auto; padding:64px 0 80px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+  .reveal{opacity:1; transform:none}
+  .scanband{display:none}
+}
+</style>
+</head>
+<body>
+<div class="scanband" aria-hidden="true"></div>
+
+<!-- ============ 導航 ============ -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="#top" aria-label="回到頁首"><b>tp</b>-browser<span class="cursor" aria-hidden="true"></span></a>
+    <button class="burger" id="burger" aria-label="開關選單" aria-expanded="false" aria-controls="navLinks">
+      <span></span><span></span><span></span>
+    </button>
+    <nav aria-label="主選單">
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#values">核心價值</a></li>
+        <li><a href="#bench">A/B 實測</a></li>
+        <li><a href="#audit">資安審計</a></li>
+        <li><a href="#compare">市場對比</a></li>
+        <li><a href="#install">一鍵安裝</a></li>
+      </ul>
+    </nav>
+    <a class="nav-cta" href="https://github.com/YourheroBOB/tp-browser" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<main id="top">
+<!-- ============ Hero ============ -->
+<section class="hero" aria-label="產品主視覺">
+  <!-- 大型裝飾 SVG：瀏覽器視窗線框 × 電路墨線 -->
+  <svg class="hero-svg" viewBox="0 0 760 560" fill="none" aria-hidden="true">
+    <g stroke="#C99A4B" stroke-width="1.4" opacity=".55">
+      <rect x="90" y="70" width="560" height="360" rx="18"/>
+      <path d="M90 118h560"/>
+      <circle cx="122" cy="94" r="6"/><circle cx="148" cy="94" r="6"/><circle cx="174" cy="94" r="6"/>
+      <rect x="116" y="146" width="220" height="14" rx="7" opacity=".7"/>
+      <rect x="116" y="178" width="150" height="14" rx="7" opacity=".45"/>
+      <path d="M116 240h180M116 268h240M116 296h200" opacity=".5"/>
+      <path d="M380 200h120l40 44v120" opacity=".8"/>
+      <path d="M430 200v-50h60" opacity=".5"/>
+      <circle cx="540" cy="404" r="26"/>
+      <circle cx="540" cy="404" r="12"/>
+      <path d="M540 340v-40M540 468v-24M476 404h-40M604 404h-24" opacity=".7"/>
+    </g>
+    <g stroke="#7C8B6F" stroke-width="1.2" opacity=".5">
+      <path d="M60 480h140l36-36h120"/>
+      <path d="M60 510h100l30-30h90"/>
+      <circle cx="356" cy="444" r="5"/><circle cx="280" cy="480" r="5"/>
+      <path d="M640 480h60M620 510h80"/>
+      <circle cx="640" cy="480" r="5"/>
+    </g>
+    <g stroke="#FAF6EE" stroke-width="1" opacity=".18">
+      <path d="M40 60l24 24M64 60L40 84"/>
+      <path d="M700 120l20 20M720 120l-20 20"/>
+      <path d="M60 300v80M40 340h40"/>
+    </g>
+    <g fill="#C99A4B" opacity=".7">
+      <circle cx="356" cy="444" r="2.4"/><circle cx="540" cy="404" r="2.4"/><circle cx="90" cy="250" r="2.4"/>
+    </g>
+  </svg>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="hero-kicker reveal">// AGENT-NATIVE BROWSER SYSTEM · v2026</p>
+      <h1 class="reveal" data-delay="1">Too<span class="amber">Power</span><br>Browser</h1>
+      <p class="hero-slogan reveal" data-delay="2" aria-label="TooPower — 強到沒朋友">
+        <span id="typewriter"></span><span class="type-caret" aria-hidden="true"></span>
+      </p>
+      <p class="hero-sub reveal" data-delay="3">
+        業界首款 <b>100% 免費開源（Apache-2.0）</b>、<b>零外部依賴</b>、橫跨
+        <b>Windows / Linux / macOS</b> 三大系統的 Agent 專用與人機協作共用瀏覽器系統。
+      </p>
+      <div class="hero-ctas reveal" data-delay="4">
+        <a class="btn btn-primary" href="https://github.com/YourheroBOB/tp-browser" target="_blank" rel="noopener">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          GitHub 倉庫
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/YourheroBOB/ego-linux" target="_blank" rel="noopener">ego-linux →</a>
+      </div>
+      <div class="hero-badges reveal" data-delay="4">
+        <span class="badge"><i>✓</i> Apache-2.0</span>
+        <span class="badge"><i>✓</i> 0 npm dependencies</span>
+        <span class="badge"><i>✓</i> Node.js 22 native</span>
+        <span class="badge"><i>✓</i> Win / Linux / macOS</span>
+      </div>
+    </div>
+    <div aria-hidden="true"></div>
+  </div>
+</section>
+
+<!-- ============ 區塊 2：三大核心價值 ============ -->
+<section id="values" aria-labelledby="values-title">
+  <div class="wrap">
+    <span class="sec-tag reveal">// 02 CORE_VALUES</span>
+    <h2 class="sec-title reveal" data-delay="1" id="values-title">三大核心價值，重新定義 Agent 瀏覽器</h2>
+    <p class="sec-sub reveal" data-delay="2">從資料主權、Token 經濟學到人機協作 —— 每個設計決策都為「Agent 與人類共用同一座瀏覽器」而生。</p>
+    <div class="cards">
+      <!-- 卡片 1：主權鎖 -->
+      <article class="card reveal" tabindex="0">
+        <p class="card-num">VALUE_01</p>
+        <div class="card-fig" aria-hidden="true">
+          <svg width="150" height="120" viewBox="0 0 150 120" fill="none">
+            <rect x="38" y="48" width="74" height="56" rx="10" stroke="#C99A4B" stroke-width="2"/>
+            <path d="M52 48V36a23 23 0 0 1 46 0v12" stroke="#C99A4B" stroke-width="2"/>
+            <circle cx="75" cy="72" r="8" stroke="#FAF6EE" stroke-width="2" opacity=".7"/>
+            <path d="M75 78v10" stroke="#FAF6EE" stroke-width="2" opacity=".7"/>
+            <path d="M20 100h24M106 100h24" stroke="#7C8B6F" stroke-width="1.6" stroke-dasharray="4 5"/>
+            <circle cx="14" cy="100" r="4" stroke="#7C8B6F" stroke-width="1.6"/>
+            <circle cx="136" cy="100" r="4" stroke="#7C8B6F" stroke-width="1.6"/>
+            <path d="M75 12v10M40 20l6 9M110 20l-6 9" stroke="#FAF6EE" stroke-width="1.4" opacity=".35"/>
+          </svg>
+        </div>
+        <h3>Cookies 與金鑰 100% 自持主權</h3>
+        <p>零雲端肉機上傳、零第三方伺服器過水。<span class="hl-g">3,371+</span> 登入態 Cookies（含 HttpOnly）<b>100%</b> 保存在使用者本機（<code>0600</code> 權限與 Windows ACL 鎖定），支援一鍵跨機加密匯出 / 匯入。</p>
+      </article>
+      <!-- 卡片 2：批次終端 -->
+      <article class="card reveal" data-delay="1" tabindex="0">
+        <p class="card-num">VALUE_02</p>
+        <div class="card-fig" aria-hidden="true">
+          <svg width="170" height="120" viewBox="0 0 170 120" fill="none">
+            <rect x="18" y="16" width="134" height="88" rx="10" stroke="#C99A4B" stroke-width="2"/>
+            <path d="M18 38h134" stroke="#C99A4B" stroke-width="2"/>
+            <circle cx="32" cy="27" r="3.4" fill="#C05B4B"/><circle cx="44" cy="27" r="3.4" fill="#C99A4B"/><circle cx="56" cy="27" r="3.4" fill="#7C8B6F"/>
+            <path d="M32 52l14 9-14 9" stroke="#7C8B6F" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M54 72h30M54 84h58" stroke="#FAF6EE" stroke-width="2" opacity=".5"/>
+            <path d="M54 60h44" stroke="#FAF6EE" stroke-width="2" opacity=".3"/>
+            <path d="M126 66l8 8-8 8" stroke="#C99A4B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>單 Turn 批次 JS，狂省 <span class="hl-g">95%+</span> Token</h3>
+        <p>告別傳統 Playwright MCP / Computer Use 每步截圖與全頁 DOM 快照的 Token 黑洞。Agent 透過 Heredoc 單次提交完整非同步腳本（<code>tp-browser nodejs</code>）：自動捲動破除懶加載、DOM 萃取、認證下載一氣呵成。</p>
+      </article>
+      <!-- 卡片 3：人機交接 -->
+      <article class="card reveal" data-delay="2" tabindex="0">
+        <p class="card-num">VALUE_03</p>
+        <div class="card-fig" aria-hidden="true">
+          <svg width="170" height="120" viewBox="0 0 170 120" fill="none">
+            <circle cx="42" cy="42" r="14" stroke="#C99A4B" stroke-width="2"/>
+            <path d="M24 96c0-16 8-26 18-26s18 10 18 26" stroke="#C99A4B" stroke-width="2"/>
+            <rect x="104" y="26" width="48" height="58" rx="9" stroke="#7C8B6F" stroke-width="2"/>
+            <path d="M118 44h20M118 56h20M118 68h12" stroke="#7C8B6F" stroke-width="2" opacity=".7"/>
+            <path d="M66 52h24M90 46l10 6-10 6" stroke="#FAF6EE" stroke-width="2" opacity=".7" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M104 92H80M80 86l-10 6 10 6" stroke="#FAF6EE" stroke-width="2" opacity=".4" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="128" cy="104" r="5" stroke="#C99A4B" stroke-width="1.6" stroke-dasharray="3 3"/>
+          </svg>
+        </div>
+        <h3>TaskSpace 人機共乘 Co-Riding</h3>
+        <p>平常無頭背景常駐（<code>tp-start</code>，零焦點搶占、零彈窗干擾）；遇 Cloudflare 驗證或 2FA 登入時，一行指令切換有頭視窗（<code>tp-headed</code>）由人類接手，完成後無縫交還 Agent。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 區塊 3：雙機 A/B 對照實測 ============ -->
+<section id="bench" aria-labelledby="bench-title">
+  <div class="wrap">
+    <span class="sec-tag reveal">// 03 BENCHMARK_AB</span>
+    <div class="bench-head">
+      <div>
+        <h2 class="sec-title reveal" data-delay="1" id="bench-title">真實雙機 A/B 對照實測</h2>
+        <p class="sec-sub reveal" data-delay="2" style="margin-bottom:0">
+          PC（RTX 5090）＋ ROG（RTX 4090）雙機，統一由 GLM 5.3 Flash 執行三大實戰任務：
+          Perplexity 超長懶加載對話擷取、GPT-Dots Cookie 注入分析、騰訊 MemHub 架構研究。
+        </p>
+      </div>
+      <div class="reveal" data-delay="2">
+        <div class="scale-toggle" role="group" aria-label="刻度切換">
+          <button type="button" id="scaleLog" aria-pressed="true">對數刻度</button>
+          <button type="button" id="scaleLin" aria-pressed="false">線性刻度</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bench-panel reveal" data-delay="2" id="benchPanel">
+      <div class="bench-legend">
+        <span><i class="dot dot-a"></i>A 組 · TooPower Browser</span>
+        <span><i class="dot dot-b"></i>B 組 · 傳統 Playwright MCP control-browser</span>
+        <span style="margin-left:auto">Task 1 Token 消耗</span>
+      </div>
+      <div class="bars" id="mainBars">
+        <!-- 寬度由 JS 依刻度寫入；data-* 為精確數值 -->
+        <div class="bar-row">
+          <p class="bar-label"><b>A 組 · 總 Tokens</b>TooPower Browser</p>
+          <div class="bar-track" role="img" aria-label="A 組總 Tokens 64,955">
+            <div class="bar-fill fill-a" data-v="64955"><span class="val">0</span></div>
+          </div>
+        </div>
+        <div class="bar-row">
+          <p class="bar-label"><b>B 組 · 總 Tokens</b>Playwright MCP</p>
+          <div class="bar-track" role="img" aria-label="B 組總 Tokens 2,639,211">
+            <div class="bar-fill fill-b" data-v="2639211"><span class="val">0</span></div>
+          </div>
+        </div>
+        <div class="bar-row">
+          <p class="bar-label"><b>A 組 · 瀏覽器 Tokens</b>TooPower Browser</p>
+          <div class="bar-track" role="img" aria-label="A 組瀏覽器 Tokens 44,827">
+            <div class="bar-fill fill-a" data-v="44827"><span class="val">0</span></div>
+          </div>
+        </div>
+        <div class="bar-row">
+          <p class="bar-label"><b>B 組 · 瀏覽器 Tokens</b>Playwright MCP</p>
+          <div class="bar-track" role="img" aria-label="B 組瀏覽器 Tokens 2,122,536">
+            <div class="bar-fill fill-b" data-v="2122536"><span class="val">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Turns / 時間 小對比條 -->
+      <div class="mini-bars">
+        <div class="mini-box">
+          <h4>TURNS 對話輪數 · Task 1</h4>
+          <div class="mini-row">
+            <span class="who">TooPower</span>
+            <div class="mini-track"><div class="mini-fill fill-a" data-pct="13.3"></div></div>
+            <span class="mini-num"><span class="cnt" data-v="4">0</span> Turns</span>
+          </div>
+          <div class="mini-row">
+            <span class="who">PW-MCP</span>
+            <div class="mini-track"><div class="mini-fill fill-b" data-pct="100"></div></div>
+            <span class="mini-num"><span class="cnt" data-v="30">0</span> Turns</span>
+          </div>
+        </div>
+        <div class="mini-box">
+          <h4>TIME 完成時間 · Task 1</h4>
+          <div class="mini-row">
+            <span class="who">TooPower</span>
+            <div class="mini-track"><div class="mini-fill fill-a" data-pct="18.9"></div></div>
+            <span class="mini-num"><span class="cnt" data-v="136.3" data-dec="1">0</span>s</span>
+          </div>
+          <div class="mini-row">
+            <span class="who">PW-MCP</span>
+            <div class="mini-track"><div class="mini-fill fill-b" data-pct="100"></div></div>
+            <span class="mini-num"><span class="cnt" data-v="720">0</span>s</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="verdict">
+        <p class="big reveal">單輪最高節省 <em>97.5%</em> Token · 雙機 12 輪總計節省 <em>91.7%</em> 瀏覽器 Token（相差 <s>12.0 倍</s>）<br>速度快 <em>4.2 ~ 9.5 倍</em></p>
+        <p class="reveal" data-delay="1">
+          單項極限（Task 1）：A 組僅耗 64,955 ~ 189,099 Tokens（瀏覽器 44,827 ~ 94,015 Tokens）/ 4 Turns / 76.1 ~ 136.3 秒完美達成，對上 B 組 2,639,211 Tokens / 30 Turns / 720 秒超時。<br>
+          雙機 12 輪全量總計（PC + ROG × 3 Tasks）：A 組 6/6 (100%) 全數通過，總計 2,044,542 Tokens（瀏覽器操作僅 1,103,960 Tokens / 20 Browser Turns）；B 組 0/6 超時，總計高達 14,332,944 Tokens（瀏覽器操作高達 13,277,610 Tokens / 156 Browser Turns）。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 區塊 4：雙重權威資安審計 ============ -->
+<section id="audit" aria-labelledby="audit-title">
+  <div class="wrap">
+    <span class="sec-tag reveal">// 04 SECURITY_AUDIT</span>
+    <h2 class="sec-title reveal" data-delay="1" id="audit-title">雙重權威資安審計</h2>
+    <p class="sec-sub reveal" data-delay="2">GPT 6.1 SOL 架構評估 ＋ GLM 5.3 源碼掃描 —— 雙重通過。每一條防線都能直接對照源碼。</p>
+    <div class="audit-grid">
+      <div class="terminal reveal" role="img" aria-label="資安審計清單：六項全數通過">
+        <div class="term-bar">
+          <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+          <span class="term-title">tp-browser — security-audit.log</span>
+        </div>
+        <div class="term-body">
+          <div class="ln"><span class="cmt"># GPT 6.1 SOL 架構評估 + GLM 5.3 源碼掃描</span></div>
+          <div class="ln"><span class="cmt"># verdict: DOUBLE PASS ✓✓</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">0 外部 npm 依賴</span> — package.json dependencies: {}，純 Node.js 22 原生 WebSocket + CDP，核心僅約 2,000 行</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">127.0.0.1 Loopback</span> 強制綁定，拒絕任何外部介面</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">Host/Origin 雙重校驗</span> — 防禦 DNS Rebinding / CSRF</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">timingSafeEqual</span> 常數時間 Token 驗證（x-tp-token）</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">realpathSync.native</span> 符號連結防逃逸</span></div>
+          <div class="ln"><span class="ok">[PASS]</span><span><span class="cmd">1 MiB</span> RPC 請求上限，阻絕記憶體洪水</span></div>
+        </div>
+      </div>
+      <div class="audit-side">
+        <div class="audit-stat reveal">
+          <p class="n"><span class="cnt" data-v="0">0</span></p>
+          <p class="d">外部 npm 依賴 — 供應鏈攻擊面歸零</p>
+        </div>
+        <div class="audit-stat reveal" data-delay="1">
+          <p class="n">≈<span class="cnt" data-v="2000">0</span> 行</p>
+          <p class="d">核心程式碼 — 任何人一個下午即可完整審閱</p>
+        </div>
+        <div class="audit-stat reveal" data-delay="2">
+          <p class="n"><span class="cnt" data-v="6">0</span>/6</p>
+          <p class="d">加固項目全數通過雙模型交叉審計</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 區塊 5：致敬 + 市場定位對比表 ============ -->
+<section id="compare" aria-labelledby="compare-title">
+  <div class="wrap">
+    <span class="sec-tag reveal">// 05 TRIBUTE_AND_POSITIONING</span>
+    <h2 class="sec-title reveal" data-delay="1" id="compare-title">致敬先行者，站穩自己的位置</h2>
+    <p class="sec-sub reveal" data-delay="2">Clean-Room 獨立實作，光明正大。</p>
+    <blockquote class="tribute reveal">
+      <b>致敬聲明：</b>本專案受 EGo Browser（<a href="https://lite.ego.app/" target="_blank" rel="noopener">https://lite.ego.app/</a>）之人機協作與 TaskSpace 概念啟發，100% 從零以純 Node.js 原生 WebSocket+CDP Clean-Room 獨立實作。
+    </blockquote>
+    <div class="tbl-scroll reveal" data-delay="1">
+      <table class="cmp">
+        <caption class="sr-only" style="position:absolute;left:-9999px">TooPower Browser、EGo Browser 與傳統 Playwright MCP 的市場定位對比</caption>
+        <thead>
+          <tr>
+            <th scope="col">項目</th>
+            <th scope="col" class="tp-col">TooPower Browser</th>
+            <th scope="col">EGo Browser</th>
+            <th scope="col">傳統 Playwright MCP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">授權與價格</th>
+            <td class="tp-col"><span class="good">Apache-2.0 完全免費</span></td>
+            <td>macOS 桌面核心閉源 + Enterprise 定價</td>
+            <td>開源，但 <span class="bad">Token 黑洞</span></td>
+          </tr>
+          <tr>
+            <th scope="row">平台</th>
+            <td class="tp-col"><span class="good">Windows / Linux / macOS</span> 全制霸</td>
+            <td>macOS 為主</td>
+            <td>跨平台</td>
+          </tr>
+          <tr>
+            <th scope="row">Cookie 主權</th>
+            <td class="tp-col"><span class="good">本機 0600 + ACL 鎖定</span>，100% 自持</td>
+            <td>企業權限控管</td>
+            <td>無特別保護</td>
+          </tr>
+          <tr>
+            <th scope="row">Token 效率</th>
+            <td class="tp-col">單 Turn 批次執行，<span class="good">實測省 97.5%</span></td>
+            <td>—</td>
+            <td><span class="bad">每步截圖 + 全頁 DOM 快照</span></td>
+          </tr>
+          <tr>
+            <th scope="row">人機共乘</th>
+            <td class="tp-col"><span class="good">TaskSpace 一鍵有頭 / 無頭切換</span></td>
+            <td>人機協作概念始祖</td>
+            <td>無</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 區塊 6：三系統一鍵安裝 + 授權 ============ -->
+<section id="install" aria-labelledby="install-title">
+  <div class="wrap">
+    <span class="sec-tag reveal">// 06 INSTALL_AND_LICENSE</span>
+    <h2 class="sec-title reveal" data-delay="1" id="install-title">三系統，一行指令，即刻上膛</h2>
+    <p class="sec-sub reveal" data-delay="2">選你的作業系統，複製、貼上、完成。需要 Node.js 22+。</p>
+
+    <div class="reveal" data-delay="2">
+      <div class="tabs" role="tablist" aria-label="作業系統選擇">
+        <button class="tab-btn" role="tab" id="tab-win" aria-selected="true" aria-controls="panel-win" data-tab="win">Windows PowerShell</button>
+        <button class="tab-btn" role="tab" id="tab-linux" aria-selected="false" aria-controls="panel-linux" data-tab="linux" tabindex="-1">Linux Bash</button>
+        <button class="tab-btn" role="tab" id="tab-mac" aria-selected="false" aria-controls="panel-mac" data-tab="mac" tabindex="-1">macOS Zsh</button>
+      </div>
+
+      <div class="install-panel">
+        <div class="term-bar" aria-hidden="true">
+          <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+          <span class="term-title" id="panelTitle">powershell — administrator</span>
+        </div>
+        <div class="install-cmd" role="tabpanel" id="panel-win" aria-labelledby="tab-win">
+          <code id="cmdText">irm https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.ps1 | iex</code>
+          <button class="copy-btn" id="copyBtn" data-cmd="irm https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.ps1 | iex">⧉ 一鍵複製</button>
+        </div>
+        <div class="install-cmd" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
+          <code>curl -fsSL https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.sh | bash</code>
+          <button class="copy-btn" data-cmd="curl -fsSL https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.sh | bash">⧉ 一鍵複製</button>
+        </div>
+        <div class="install-cmd" role="tabpanel" id="panel-mac" aria-labelledby="tab-mac" hidden>
+          <code>curl -fsSL https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.sh | zsh</code>
+          <button class="copy-btn" data-cmd="curl -fsSL https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.sh | zsh">⧉ 一鍵複製</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 快速上手三行 -->
+    <div class="qstart">
+      <div class="qstep reveal"><code>$ tp-start</code><span>無頭背景常駐，零焦點搶占、零彈窗干擾</span></div>
+      <div class="qstep reveal" data-delay="1"><code>$ tp-headed</code><span>人機共乘切換：Cloudflare / 2FA 由人類一鍵接手</span></div>
+      <div class="qstep reveal" data-delay="2"><code>$ tp-browser nodejs</code><span>單 Turn 批次腳本：捲動、萃取、下載一氣呵成</span></div>
+    </div>
+
+    <!-- 授權 -->
+    <div class="license reveal">
+      <div>
+        <p class="lic-name">Apache License 2.0 + NOTICE</p>
+        <p>100% 免費開源、商用友善、保留署名。Clean-Room 獨立實作，致敬 EGo Browser 概念啟發。</p>
+      </div>
+      <a class="btn btn-ghost" href="https://github.com/YourheroBOB/tp-browser" target="_blank" rel="noopener">閱讀 LICENSE →</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ============ Footer ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-inner">
+      <p class="f-left">© 2026 <b>TooPower</b> · Apache-2.0 License</p>
+      <div class="foot-links">
+        <a href="https://github.com/YourheroBOB/tp-browser" target="_blank" rel="noopener">github/YourheroBOB/tp-browser</a>
+        <a href="https://github.com/YourheroBOB/ego-linux" target="_blank" rel="noopener">github/YourheroBOB/ego-linux</a>
+      </div>
+    </div>
+    <p class="foot-tag">TOOPOWER — 強 到 沒 朋 友</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- 打字機 Slogan ---------- */
+  var slogan = "TooPower — 強到沒朋友";
+  var tw = document.getElementById("typewriter");
+  if (reduced) { tw.textContent = slogan; }
+  else {
+    var i = 0;
+    (function type(){
+      if (i <= slogan.length) {
+        tw.textContent = slogan.slice(0, i++);
+        setTimeout(type, i <= 9 ? 90 : 130);
+      }
+    })();
+  }
+
+  /* ---------- 滾動進場 ---------- */
+  var revealEls = document.querySelectorAll(".reveal");
+  if (reduced || !("IntersectionObserver" in window)) {
+    revealEls.forEach(function(el){ el.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    revealEls.forEach(function(el){ io.observe(el); });
+  }
+
+  /* ---------- 數字計數器 ---------- */
+  function fmt(n, dec){
+    return n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  }
+  function countUp(el){
+    var target = parseFloat(el.getAttribute("data-v"));
+    var dec = parseInt(el.getAttribute("data-dec") || "0", 10);
+    if (reduced) { el.textContent = fmt(target, dec); return; }
+    var dur = 1600, t0 = null;
+    function step(ts){
+      if (!t0) t0 = ts;
+      var p = Math.min((ts - t0) / dur, 1);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(target * eased, dec);
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = fmt(target, dec);
+    }
+    requestAnimationFrame(step);
+  }
+
+  /* ---------- 主長條圖：對數 / 線性刻度 ---------- */
+  var MAX_V = 2639211, LOG_BASE = 4.5, LOG_MAX = Math.log10(MAX_V);
+  var logMode = true;
+  var fills = Array.prototype.slice.call(document.querySelectorAll("#mainBars .bar-fill"));
+  function barWidth(v){
+    if (logMode) return Math.max(3, (Math.log10(v) - LOG_BASE) / (LOG_MAX - LOG_BASE) * 100);
+    return Math.max(1.2, v / MAX_V * 100);
+  }
+  function paintBars(animate){
+    fills.forEach(function(f){
+      var v = parseFloat(f.getAttribute("data-v"));
+      var w = barWidth(v);
+      if (!animate) f.style.transition = "none";
+      f.style.width = w + "%";
+      f.classList.toggle("outside", w < 22);
+      if (!animate) { void f.offsetWidth; f.style.transition = ""; }
+    });
+  }
+  var btnLog = document.getElementById("scaleLog");
+  var btnLin = document.getElementById("scaleLin");
+  function setScale(toLog){
+    logMode = toLog;
+    btnLog.setAttribute("aria-pressed", String(toLog));
+    btnLin.setAttribute("aria-pressed", String(!toLog));
+    paintBars(true);
+  }
+  btnLog.addEventListener("click", function(){ setScale(true); });
+  btnLin.addEventListener("click", function(){ setScale(false); });
+
+  /* ---------- 進入視窗觸發：主條 + 小條 + 計數器 ---------- */
+  var benchPanel = document.getElementById("benchPanel");
+  var benchDone = false;
+  function fireBench(){
+    if (benchDone) return; benchDone = true;
+    paintBars(true);
+    fills.forEach(function(f){
+      var valEl = f.querySelector(".val");
+      valEl.setAttribute("data-v", f.getAttribute("data-v"));
+      countUp(valEl);
+    });
+    document.querySelectorAll(".mini-fill").forEach(function(m){
+      m.style.width = m.getAttribute("data-pct") + "%";
+    });
+    document.querySelectorAll("#bench .cnt").forEach(countUp);
+  }
+  if (reduced || !("IntersectionObserver" in window)) { fireBench(); }
+  else {
+    var bio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){ if (e.isIntersecting) { fireBench(); bio.disconnect(); } });
+    }, { threshold: 0.25 });
+    bio.observe(benchPanel);
+  }
+  /* 審計區計數器 */
+  var auditBox = document.getElementById("audit");
+  var auditDone = false;
+  if (!reduced && "IntersectionObserver" in window) {
+    var aio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting && !auditDone) {
+          auditDone = true;
+          auditBox.querySelectorAll(".cnt").forEach(countUp);
+          aio.disconnect();
+        }
+      });
+    }, { threshold: 0.25 });
+    aio.observe(auditBox);
+  } else {
+    auditBox.querySelectorAll(".cnt").forEach(countUp);
+  }
+
+  /* ---------- 安裝分頁 ---------- */
+  var tabBtns = Array.prototype.slice.call(document.querySelectorAll(".tab-btn"));
+  var titles = { win: "powershell — administrator", linux: "bash — shell", mac: "zsh — terminal" };
+  function selectTab(btn){
+    tabBtns.forEach(function(b){
+      var on = b === btn;
+      b.setAttribute("aria-selected", String(on));
+      b.tabIndex = on ? 0 : -1;
+      document.getElementById("panel-" + b.getAttribute("data-tab")).hidden = !on;
+    });
+    document.getElementById("panelTitle").textContent = titles[btn.getAttribute("data-tab")];
+  }
+  tabBtns.forEach(function(b, idx){
+    b.addEventListener("click", function(){ selectTab(b); });
+    b.addEventListener("keydown", function(ev){
+      var next = null;
+      if (ev.key === "ArrowRight") next = tabBtns[(idx + 1) % tabBtns.length];
+      if (ev.key === "ArrowLeft")  next = tabBtns[(idx - 1 + tabBtns.length) % tabBtns.length];
+      if (next) { ev.preventDefault(); selectTab(next); next.focus(); }
+    });
+  });
+
+  /* ---------- 一鍵複製 ---------- */
+  document.querySelectorAll(".copy-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var text = btn.getAttribute("data-cmd");
+      function done(){
+        var orig = "⧉ 一鍵複製";
+        btn.textContent = "✓ 已複製";
+        btn.classList.add("copied");
+        setTimeout(function(){ btn.textContent = orig; btn.classList.remove("copied"); }, 2000);
+      }
+      function fallback(){
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else fallback();
+    });
+  });
+
+  /* ---------- 漢堡選單 ---------- */
+  var burger = document.getElementById("burger");
+  var navLinks = document.getElementById("navLinks");
+  burger.addEventListener("click", function(){
+    var open = navLinks.classList.toggle("open");
+    burger.setAttribute("aria-expanded", String(open));
+  });
+  navLinks.addEventListener("click", function(e){
+    if (e.target.tagName === "A") {
+      navLinks.classList.remove("open");
+      burger.setAttribute("aria-expanded", "false");
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -5,8 +5,8 @@
 // localhost HTTP: POST /rpc for calls and GET /events (SSE) for pushes.
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync } from 'node:fs';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { keyDescriptor } from './keys.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Every caller-supplied filesystem path passes through safePath():
-// absolute only, no '..' anywhere, no '.' components, no NUL bytes.
+// absolute only, no '..' anywhere, no '.' components, no NUL bytes, symlink-resolved.
 function assertSafePath(p) {
   if (typeof p !== 'string' || p.length === 0 || p.includes('\0')) throw new EgoError('BadPath', 'invalid path');
   if (p.includes('..')) throw new EgoError('BadPath', `path traversal rejected: ${p}`);
@@ -30,7 +30,12 @@ function assertSafePath(p) {
 }
 function safePath(p, { mustExist = false } = {}) {
   const norm = assertSafePath(p);
-  if (mustExist && !existsSync(norm)) throw new EgoError('BadPath', `path does not exist: ${p}`);
+  if (mustExist) {
+    if (!existsSync(norm)) throw new EgoError('BadPath', `path does not exist: ${p}`);
+    return assertSafePath(realpathSync.native(norm));
+  }
+  const dir = dirname(norm);
+  if (existsSync(dir)) assertSafePath(realpathSync.native(dir));
   return norm;
 }
 
@@ -43,13 +48,14 @@ const PORT = ALT_PORT ? 9774 : 9772;
 const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;
 const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
-mkdirSync(DOWNLOADS_DIR, { recursive: true });
+mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+mkdirSync(DOWNLOADS_DIR, { recursive: true, mode: 0o700 });
 
 const store = new Store(join(DATA_DIR, 'spaces.json'));
 let hub = null;
 let chromeReady = false;
 
-function log(...a) { console.log('[ego-browserd]', ...a); }
+function log(...a) { console.log('[tp-browserd]', ...a); }
 
 async function attachChrome() {
   for (;;) {
@@ -107,13 +113,19 @@ function tokenPath() { return join(DATA_DIR, 'token'); }
 function ensureToken() {
   const p = tokenPath();
   if (!existsSync(p)) {
-    mkdirSync(DATA_DIR, { recursive: true });
+    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(p, randomBytes(24).toString('hex'), { mode: 0o600 });
   }
   return readFileSync(p, 'utf8').trim();
 }
 const TOKEN = ensureToken();
-writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1));
+const TOKEN_BUF = Buffer.from(TOKEN);
+function checkToken(req) {
+  const t = String(req.headers['x-tp-token'] || req.headers['x-ego-token'] || '');
+  const b = Buffer.from(t);
+  return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
+}
+writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
 
 // ---------- SSE push channels ----------
 const sseClients = new Set();
@@ -124,10 +136,14 @@ function broadcastPush(targetId, kind, payload) {
 
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
+  if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
+    res.writeHead(403).end('forbidden host/origin');
+    return;
+  }
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
   if (url.pathname === '/events') {
-    if (req.headers['x-ego-token'] !== TOKEN) { res.writeHead(403).end('bad token'); return; }
+    if (!checkToken(req)) { res.writeHead(403).end('bad token'); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     res.write(':ok\n\n');
     sseClients.add(res);
@@ -135,9 +151,14 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === '/rpc' && req.method === 'POST') {
-    if (req.headers['x-ego-token'] !== TOKEN) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
+    if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
     const chunks = [];
-    for await (const c of req) chunks.push(c);
+    let total = 0;
+    for await (const c of req) {
+      total += c.length;
+      if (total > 1048576) { req.destroy(); return; }
+      chunks.push(c);
+    }
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
     try {

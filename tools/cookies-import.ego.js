@@ -5,11 +5,14 @@
 const { readFileSync, existsSync } = await import('node:fs');
 const { join } = await import('node:path');
 const { homedir } = await import('node:os');
-// Fixed inputs: EGO_COOKIES_FILE or ~/.local/share/ego-linux/ego-cookies.json or /tmp/ego-cookies.json
-const HOME_IN = join(homedir(), '.local', 'share', 'ego-linux', 'ego-cookies.json');
-const IN = (process.env.EGO_COOKIES_FILE && existsSync(process.env.EGO_COOKIES_FILE))
-  ? process.env.EGO_COOKIES_FILE
-  : (existsSync(HOME_IN) ? HOME_IN : '/tmp/ego-cookies.json');
+// Fixed inputs: TP_COOKIES_FILE / EGO_COOKIES_FILE or ~/.local/share/ego-linux/{cookies,ego-cookies}.json
+const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
+const C1 = join(DATA_DIR, 'cookies.json');
+const C2 = join(DATA_DIR, 'ego-cookies.json');
+const envPath = process.env.TP_COOKIES_FILE || process.env.EGO_COOKIES_FILE;
+const IN = (envPath && existsSync(envPath))
+  ? envPath
+  : (existsSync(C1) ? C1 : (existsSync(C2) ? C2 : '/tmp/ego-cookies.json'));
 const task = await taskSpace('cookies-import');
 const page = task.page('p1');
 const rawData = JSON.parse(readFileSync(IN, 'utf8'));

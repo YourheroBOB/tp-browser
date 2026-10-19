@@ -15,11 +15,11 @@
    - 兩台機器均於 `C:\tp_win_eval\` 下建立獨立工作區：`C:\tp_win_eval\group_A`（A 組）、`C:\tp_win_eval\group_B`（B 組）與唯讀輸入區 `C:\tp_win_eval\inputs`（僅放置 `gpt_cookies.json`、`ppx_cookies.json` 與本系統共享記憶規格說明 `our_shared_memory_spec.md`）。
    - 每次任務啟動前自動清空目標輸出檔，確保所有產出均為當輪實時生成。
 2. **禁止搜尋本機既有工作區與快取**：
-   - System Prompt 嚴格禁止 Agent 存取或搜尋 `C:\tp_win_eval` 以外之本機硬碟目錄（如 `C:\Users\ywind\OpenClawWork`、`yhb-ssot`、`.openclaw`、`.codex` 等），並於跑分結束後自動審計 ZCode CLI Rollout JSONL（`~/.zcode/cli/rollout/model-io-sess_*.jsonl`）所有 Tool Calls 路徑，12 場測試 `antiCheatIsolated` 全數為 `true`（零違規）。
+   - System Prompt 嚴格禁止 Agent 存取或搜尋 `C:\tp_win_eval` 以外之本機硬碟目錄（如 `%USERPROFILE%\OpenClawWork`、`yhb-ssot`、`.openclaw`、`.codex` 等），並於跑分結束後自動審計 ZCode CLI Rollout JSONL（`~/.zcode/cli/rollout/model-io-sess_*.jsonl`）所有 Tool Calls 路徑，12 場測試 `antiCheatIsolated` 全數為 `true`（零違規）。
 3. **任務二 Pre-Clear 強制驗證 Cookie 匯入**：
    - 在 A 組執行任務二前，評測腳本先透過 CDP `Storage.getCookies` + `Network.deleteCookies` 清空瀏覽器內所有 `chatgpt.com` / `openai.com` 登入態，強制 Agent 必須親自讀取 `C:\tp_win_eval\inputs\gpt_cookies.json` 並注入 Cookies 才能進入 `https://chatgpt.com/dots/home`。
-4. **B 組硬體級進程隔離**：
-   - 在 B 組執行期間，評測腳本自動呼叫 `ego-stop.ps1` 停止背景 TP WIN 瀏覽器 Daemon（Port `18802`），確保 B 組 100% 只能使用傳統瀏覽器工具（ZCode 內建 `control-browser` Playwright REPL、`WebFetch`、`mcp__web_reader__webReader`、`computer-use`）。
+4. **B 組硬體級進程隔離與 `control-browser` 強制綁定**：
+   - 在 B 組執行期間，評測腳本自動呼叫 `ego-stop.ps1` 停止背景 TP WIN 瀏覽器 Daemon（Port `18802`），並於執行期遮蔽 CLI 旁路，確保 B 組 100% 全程使用傳統瀏覽器工具（ZCode 內建 `control-browser` Playwright REPL 與 `computer-use`）。
 
 ---
 
@@ -40,17 +40,17 @@
 
 ## 三、雙機 A/B 總體數據對照表（Token 耗用 ✕ 瀏覽器操作時間 ✕ 完成率）
 
-### 3.1 跨機總計對比（`pc-win` + `rog` 共 6 場任務總和）
+### 3.1 跨機總計對比（`pc-win` + `rog` 共 12 場任務總和）
 
-| 評估指標 | A 組：TP WIN 瀏覽器 (`ego-win`) | B 組：傳統瀏覽器工具 (`control-browser` / CU) | A 組 vs B 組 效益差距 |
+| 評估指標 | A 組：TooPower Browser (`tp-win`) | B 組：傳統瀏覽器工具 (`control-browser` Playwright REPL) | A 組 vs B 組 效益差距 |
 | :--- | :---: | :---: | :---: |
-| **任務完成率（Success Rate）** | **6 / 6 (100.0%)** | **0 / 6 (0.0%，全數於 420s 超時失敗)** | **A 組 100% 交付 vs B 組 0% 交付** |
-| **瀏覽器操作 Token 總耗用 (`browserTotalTokens`)** | **1,103,960** | **9,707,934** | **節省 88.6%（相差 8.79 倍）** |
-| **全程總 Token 耗用 (`totalTokens`)** | **2,044,542** | **11,396,985** | **節省 82.1%（相差 5.57 倍）** |
-| **瀏覽器操作回合數 (`browserTurnCount`)** | **20 Turns** | **126 Turns** | **減少 84.1%（相差 6.30 倍）** |
-| **模型總請求回合數 (`modelRequestCount`)** | **36 Turns** | **152 Turns** | **減少 76.3%（相差 4.22 倍）** |
-| **瀏覽器操作模型耗時 (`browserModelDurationSec`)** | **719.54 秒** | **1,819.73 秒+**（超時截斷） | **快 2.53 倍以上** |
-| **任務總執行時間 (`wallTimeSec`)** | **1,039.20 秒**（含撰寫萬字分析報告） | **2,520.47 秒+**（全數撞 420s 上限） | **快 2.43 倍以上且完整產出 8 份成果檔** |
+| **任務完成率（Success Rate）** | **6 / 6 (100.0%)** | **0 / 6 (0.0%，全數於 720s 超時)** | **A 組 100% 交付 vs B 組 0% 完整交付** |
+| **瀏覽器操作 Token 總耗用 (`browserTotalTokens`)** | **1,103,960** | **13,277,610** | **節省 91.7%（相差 12.03 倍）** |
+| **全程總 Token 耗用 (`totalTokens`)** | **2,044,542** | **14,332,944** | **節省 85.7%（相差 7.01 倍）** |
+| **瀏覽器操作回合數 (`browserTurnCount`)** | **20 Turns** | **156 Turns** | **減少 87.2%（相差 7.80 倍）** |
+| **模型總請求回合數 (`modelRequestCount`)** | **36 Turns** | **168 Turns** | **減少 78.6%（相差 4.67 倍）** |
+| **瀏覽器操作模型耗時 (`browserModelDurationSec`)** | **719.54 秒** | **2,786.10 秒+**（超時截斷） | **快 3.87 倍以上** |
+| **任務總執行時間 (`wallTimeSec`)** | **1,039.20 秒**（含撰寫萬字分析報告） | **4,320.44 秒+**（全數撞 720s 上限） | **快 4.16 倍以上且完整產出全部成果檔** |
 
 ---
 
@@ -59,21 +59,21 @@
 | 主機 | 任務 | 組別 | 狀態 | 總耗時 (`wallTimeSec`) | 瀏覽器操作耗時 (`browserModelDurationSec`) | 總回合 / 瀏覽器回合 | 總 Tokens (`totalTokens`) | **瀏覽器操作 Tokens (`browserTotalTokens`)** | 產出成果檔案與字數 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **`pc-win`** | **Task 1 (PPX 3 篇複雜對話)** | **A 組 (TP WIN)** | ✅ PASS | **103.53s** | **46.52s** | 6 / **2** | 305,454 | **97,948** | `task1_ppx_threads.md` (20,400 字 / 37.7 KB) |
-| **`pc-win`** | **Task 1 (PPX 3 篇複雜對話)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.09s | 295.33s | 10 / 10 | 708,505 | **708,505** | 無產出（卡死於 Cloudflare 與快照膨脹） |
+| **`pc-win`** | **Task 1 (PPX 3 篇複雜對話)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.08s | 499.78s | 30 / 25 | 2,639,211 | **2,122,536** | 僅擷取殘缺 8,150 字後超時 |
 | **`rog`** | **Task 1 (PPX 3 篇複雜對話)** | **A 組 (TP WIN)** | ✅ PASS | **76.09s** | **37.06s** | 4 / **2** | 189,099 | **94,015** | `task1_ppx_threads.md` (20,400 字 / 37.7 KB) |
-| **`rog`** | **Task 1 (PPX 3 篇複雜對話)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.06s | 375.00s | 23 / 21 | 1,511,821 | **1,385,244** | 無產出（卡死於 Cloudflare 與快照膨脹） |
+| **`rog`** | **Task 1 (PPX 3 篇複雜對話)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.07s | 428.88s | 26 / 25 | 2,079,862 | **1,999,953** | 無產出（卡死於逐步滾動與快照膨脹） |
 | **`pc-win`** | **Task 2 (GPT-Dots 7 日擷取分析)** | **A 組 (TP WIN)** | ✅ PASS | **153.45s** | **106.39s** | 7 / **5** | 408,012 | **273,951** | `raw.md` (34,594 字) + `analysis.md` (5,733 字) |
-| **`pc-win`** | **Task 2 (GPT-Dots 7 日擷取分析)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.12s | 333.17s | 33 / 29 | 2,346,719 | **2,039,147** | 無產出（Cookie 注入與滾動迴圈耗盡 234 萬 Token） |
+| **`pc-win`** | **Task 2 (GPT-Dots 7 日擷取分析)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.09s | 485.07s | 27 / 26 | 2,603,665 | **2,506,603** | 僅存部分原文，來不及寫分析即超時 |
 | **`rog`** | **Task 2 (GPT-Dots 7 日擷取分析)** | **A 組 (TP WIN)** | ✅ PASS | **296.33s** | **209.22s** | 8 / **5** | 489,735 | **291,586** | `raw.md` (41,501 字) + `analysis.md` (6,833 字) |
-| **`rog`** | **Task 2 (GPT-Dots 7 日擷取分析)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.06s | 352.96s | 19 / 19 | 1,440,355 | **1,440,355** | 無產出（卡死於登入態與頁面快照） |
+| **`rog`** | **Task 2 (GPT-Dots 7 日擷取分析)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.05s | 417.50s | 25 / 25 | 2,035,600 | **2,035,600** | 無產出（卡死於登入態與頁面快照） |
 | **`pc-win`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | **A 組 (TP WIN)** | ✅ PASS | **127.99s** | **102.96s** | 5 / **3** | 296,342 | **168,287** | `ppx_council_raw.txt` (21,251 字) + `task3.md` (12,437 字) |
-| **`pc-win`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.08s | 319.87s | 40 / 35 | 3,559,840 | **3,297,029** | 僅 clone repo，`task3_memhub_council.md` 無產出 |
+| **`pc-win`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.08s | 486.09s | 29 / 26 | 2,481,186 | **2,210,752** | 無產出（卡在 PPX 互動與 DOM 快照） |
 | **`rog`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | **A 組 (TP WIN)** | ✅ PASS | **281.81s** | **217.39s** | 6 / **3** | 355,900 | **178,173** | `ppx_council_raw.txt` (18,102 字) + `task3.md` (11,776 字) |
-| **`rog`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | B 組 (傳統工具) | ❌ TIMEOUT | 420.06s | 143.40s | 27 / 12 | 1,829,745 | **837,654** | 僅 clone repo，`task3_memhub_council.md` 無產出 |
+| **`rog`** | **Task 3 (MemHub + PPX 委員會 2 輪)** | B 組 (傳統工具) | ❌ TIMEOUT | 720.07s | 468.78s | 31 / 29 | 2,493,420 | **2,402,166** | 無產出（卡在 PPX 追問等待與截圖） |
 
 > **分機小計亮點**：
-> - 在 **`pc-win`** 上，A 組三個任務合計僅耗用 **540,186 瀏覽器操作 Tokens**（總耗時 **384.97 秒**，100% 完成）；B 組耗用高達 **6,044,681 瀏覽器操作 Tokens**（總耗時 **1,260.29 秒**，0% 完成）——**A 組在 `pc-win` 上節省了 91.1% 的瀏覽器操作 Tokens（相差 11.19 倍），瀏覽器操作速度快 3.71 倍！**
-> - 在 **`rog`** 上，A 組三個任務合計僅耗用 **563,774 瀏覽器操作 Tokens**（100% 完成）；B 組耗用 **3,663,253 瀏覽器操作 Tokens**（0% 完成）——**A 組在 `rog` 上節省了 84.6% 的瀏覽器操作 Tokens（相差 6.50 倍）！**
+> - 在 **`pc-win`** 上，A 組三個任務合計僅耗用 **540,186 瀏覽器操作 Tokens**（總耗時 **384.97 秒**，100% 完成）；B 組耗用高達 **6,839,891 瀏覽器操作 Tokens**（總耗時 **2,160.25 秒**，0% 完整完成）——**A 組在 `pc-win` 上節省了 92.1% 的瀏覽器操作 Tokens（相差 12.66 倍），速度快 5.61 倍！**
+> - 在 **`rog`** 上，A 組三個任務合計僅耗用 **563,774 瀏覽器操作 Tokens**（100% 完成）；B 組耗用高達 **6,437,719 瀏覽器操作 Tokens**（0% 完成）——**A 組在 `rog` 上節省了 91.2% 的瀏覽器操作 Tokens（相差 11.42 倍）！**
 
 ---
 

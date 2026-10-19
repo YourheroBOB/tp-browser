@@ -36,11 +36,41 @@ else
   CHROME_PORT=9773
 fi
 
-# Check if already healthy when not restarting or switching to headed
-if [ "$RESTART" -eq 0 ] && [ "$HEADED" -eq 0 ]; then
-  if curl -fsS --max-time 2 "http://127.0.0.1:$DAEMON_PORT/health" 2>/dev/null | grep -q '"chrome":true'; then
-    echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s))"
+# Check if running inside WSL2 and --headed is requested -> delegate to Windows desktop GUI browser!
+if [ "$HEADED" -eq 1 ] && [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
+  WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  WIN_EGO_DIR=""
+  for d in /mnt/c/Users/*/.local/share/ego-linux; do
+    if [ -f "$d/scripts/ego-start.ps1" ]; then WIN_EGO_DIR="$d"; break; fi
+  done
+  if [ -x "$WIN_PS" ] && [ -n "$WIN_EGO_DIR" ]; then
+    WIN_USER="$(basename "$(dirname "$(dirname "$(dirname "$WIN_EGO_DIR")")")")"
+    WIN_SCRIPT="C:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
+    if [ "$RESTART" -eq 1 ]; then
+      "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed -Restart
+    else
+      "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed
+    fi
+    [ -f "$WIN_EGO_DIR/daemon.json" ] && cp -f "$WIN_EGO_DIR/daemon.json" "$DATA_DIR/daemon.json"
+    [ -f "$WIN_EGO_DIR/token" ] && cp -f "$WIN_EGO_DIR/token" "$DATA_DIR/token"
+    chmod 600 "$DATA_DIR/token" "$DATA_DIR/daemon.json" 2>/dev/null || true
     exit 0
+  fi
+fi
+
+# Check if already healthy when not restarting
+if [ "$RESTART" -eq 0 ]; then
+  if curl -fsS --max-time 2 "http://127.0.0.1:$DAEMON_PORT/health" 2>/dev/null | grep -q '"chrome":true'; then
+    if [ "$HEADED" -eq 0 ]; then
+      echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s))"
+      exit 0
+    else
+      # If already running in headed mode (no --headless in process args), preserve open window & tabs!
+      if ps ax -o command= 2>/dev/null | grep "$PROFILE_DIR" | grep -v grep | grep -qv -- "--headless"; then
+        echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s), mode=headed)"
+        exit 0
+      fi
+    fi
   fi
 fi
 

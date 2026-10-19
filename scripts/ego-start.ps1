@@ -27,14 +27,27 @@ if (-not $UseAlt) {
 $DaemonPort = if ($UseAlt) { 9774 } else { 9772 }
 $ChromePort = if ($UseAlt) { 9775 } else { 9773 }
 
-# 2. If not -Restart and not -Headed, check if already healthy on target port
-if (-not $Restart -and -not $Headed) {
+# 2. Check if already healthy on target port (preserve existing headed desktop browser if -Headed and not -Restart)
+if (-not $Restart) {
     try {
         $h = Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/health" -TimeoutSec 2
         $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 2
         if ($h.ok -and $h.chrome -and $cv.'User-Agent' -match 'Windows') {
-            Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
-            exit 0
+            if (-not $Headed) {
+                Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
+                exit 0
+            } else {
+                $HeadedProc = @(Get-CimInstance Win32_Process | Where-Object {
+                    ($_.Name -match '^(chrome|msedge|brave)\.exe$') -and
+                    ($_.CommandLine -like "*ego-linux*profile-agent*") -and
+                    ($_.CommandLine -notlike "*--headless*") -and
+                    ($_.SessionId -ge 1)
+                })
+                if ($HeadedProc.Count -gt 0) {
+                    Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser), mode=headed, session=$($HeadedProc[0].SessionId))"
+                    exit 0
+                }
+            }
         }
     } catch {}
 }
@@ -42,7 +55,7 @@ if (-not $Restart -and -not $Headed) {
 # 3. Stop existing Windows TP Browser processes (only profile-agent & ego-browserd.js)
 Get-CimInstance Win32_Process | Where-Object {
     ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
-    ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
+    ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
@@ -78,7 +91,7 @@ if (-not $BrowserBin -or -not (Test-Path $BrowserBin)) {
     exit 1
 }
 
-# 5. Discover Node.js binary
+# 5. Discover Node.js binary & initialize profile (Bookmarks Bar + Favicons + Cookies)
 $NodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $NodeBin) {
     foreach ($nc in @("C:\Program Files\nodejs\node.exe", "$env:LOCALAPPDATA\Programs\nodejs\node.exe")) {
@@ -90,21 +103,62 @@ if (-not $NodeBin) {
     exit 1
 }
 
-# 6. Launch Chrome/Edge with CDP on $ChromePort (using WMI Win32_Process.Create for zero handle inheritance in headless mode)
-$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --noerrdialogs --disable-popup-blocking --disable-extensions --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate about:blank"
+$ProfileInitJs = Join-Path $DataDir "tools\profile-init.js"
+if (-not (Test-Path $ProfileInitJs)) {
+    $ProfileInitJs = Join-Path (Split-Path $PSScriptRoot -Parent) "tools\profile-init.js"
+}
+if (Test-Path $ProfileInitJs) {
+    & $NodeBin $ProfileInitJs 2>$null | Out-Null
+}
+
+# 6. Launch Chrome/Edge with CDP on $ChromePort
+$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --noerrdialogs --disable-popup-blocking --disable-extensions --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate about:blank"
+$CurrentSessionId = (Get-Process -Id $PID).SessionId
+
 if (-not $Headed) {
     $ChromeCmdLine = "`"$BrowserBin`" --headless=new $CommonFlags"
     Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $ChromeCmdLine } | Out-Null
+} elseif ($CurrentSessionId -eq 0) {
+    # Break out of Windows SSH Session 0 into the user's interactive desktop (Session 1+) via Task Scheduler (/IT)
+    $GuiPs1 = Join-Path $DataDir "scripts\launch-headed-gui.ps1"
+    New-Item -ItemType Directory -Force -Path (Split-Path $GuiPs1) | Out-Null
+    $EscBrowser = $BrowserBin.Replace("'", "''")
+    $EscFlags = $CommonFlags.Replace("'", "''")
+    Set-Content -Path $GuiPs1 -Value "Start-Process -FilePath '$EscBrowser' -ArgumentList '$EscFlags'" -Encoding UTF8
+    $TaskName = "TooPowerBrowserHeaded"
+    $TaskTr = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$GuiPs1`""
+    & schtasks.exe /Create /TN $TaskName /TR $TaskTr /SC ONCE /ST 00:00 /IT /F 2>$null | Out-Null
+    & schtasks.exe /Run /TN $TaskName 2>$null | Out-Null
 } else {
     Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags | Out-Null
 }
 
-for ($i = 0; $i -lt 16; $i++) {
+for ($i = 0; $i -lt 18; $i++) {
     Start-Sleep -Milliseconds 500
     try {
         $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 1
         if ($cv.webSocketDebuggerUrl) { break }
     } catch {}
+}
+
+# Fallback if schtasks /IT did not start Chrome (e.g. headless server with no interactive desktop logged in)
+try {
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 1
+} catch {
+    if ($Headed -and $CurrentSessionId -eq 0) {
+        Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags | Out-Null
+        for ($i = 0; $i -lt 12; $i++) {
+            Start-Sleep -Milliseconds 500
+            try {
+                $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 1
+                if ($cv.webSocketDebuggerUrl) { break }
+            } catch {}
+        }
+    }
+}
+
+if ($Headed -and $CurrentSessionId -eq 0) {
+    & schtasks.exe /Delete /TN "TooPowerBrowserHeaded" /F 2>$null | Out-Null
 }
 
 # 7. Launch ego-browserd.js via WMI Win32_Process.Create (detached from SSH/parent pipes)

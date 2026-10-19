@@ -33,11 +33,14 @@ foreach ($d in @("bin", "daemon", "lib", "scripts", "tools", "tests", "skills"))
 # Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
 $SkillSrc = Join-Path $DataDir "skills\tp-browser\SKILL.md"
 if (Test-Path $SkillSrc) {
-    foreach ($sRoot in @((Join-Path $HOME ".claude\skills\tp-browser"), (Join-Path $HOME ".agents\skills\tp-browser"), (Join-Path $HOME ".codex\skills\tp-browser"))) {
-        New-Item -ItemType Directory -Force -Path $sRoot | Out-Null
-        Copy-Item -Force $SkillSrc (Join-Path $sRoot "SKILL.md")
+    foreach ($sBase in @((Join-Path $HOME ".claude\skills"), (Join-Path $HOME ".agents\skills"), (Join-Path $HOME ".codex\skills"))) {
+        foreach ($sName in @("tp-browser", "ego-browser")) {
+            $sRoot = Join-Path $sBase $sName
+            New-Item -ItemType Directory -Force -Path $sRoot | Out-Null
+            Copy-Item -Force $SkillSrc (Join-Path $sRoot "SKILL.md")
+        }
     }
-    Write-Output "Installed AI Agent Skill (SKILL.md) to ~/.claude/skills, ~/.agents/skills, ~/.codex/skills"
+    Write-Output "Installed AI Agent Skill (SKILL.md) to ~/.claude/skills, ~/.agents/skills, ~/.codex/skills (tp-browser + ego-browser)"
 }
 if ($TempClone -and (Test-Path $TempClone)) { Remove-Item -Recurse -Force $TempClone -ErrorAction SilentlyContinue }
 

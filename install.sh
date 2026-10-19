@@ -72,33 +72,33 @@ ln -sf "$APP_DIR/scripts/tp-start.sh" "$BIN_DIR/tp-start"
 ln -sf "$APP_DIR/scripts/tp-headed.sh" "$BIN_DIR/tp-headed"
 ln -sf "$APP_DIR/scripts/tp-stop.sh" "$BIN_DIR/tp-stop"
 
-# Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
-if [ -f "$APP_DIR/skills/tp-browser/SKILL.md" ]; then
-  for skill_root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills"; do
-    mkdir -p "$skill_root/tp-browser" 2>/dev/null || true
-    cp -f "$APP_DIR/skills/tp-browser/SKILL.md" "$skill_root/tp-browser/SKILL.md" 2>/dev/null || true
+ln -sf "$APP_DIR/scripts/tp-cli.sh" "$BIN_DIR/ego-browser"
+ln -sf "$APP_DIR/scripts/tp-daemon.sh" "$BIN_DIR/ego-browserd"
+ln -sf "$APP_DIR/scripts/tp-start.sh" "$BIN_DIR/ego-start"
+ln -sf "$APP_DIR/scripts/tp-headed.sh" "$BIN_DIR/ego-headed"
+ln -sf "$APP_DIR/scripts/tp-stop.sh" "$BIN_DIR/ego-stop"
+
+if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+  for cmd in tp-browser tp-browserd tp-start tp-headed tp-stop ego-browser ego-browserd ego-start ego-headed ego-stop; do
+    ln -sf "$BIN_DIR/$cmd" "/usr/local/bin/$cmd" 2>/dev/null || true
   done
 fi
 
-# Only install ego-* compatibility aliases if native macOS EGo Browser is not present (or --replace-ego is passed)
-REPLACE_EGO=0
-for arg in "$@"; do [ "$arg" = "--replace-ego" ] && REPLACE_EGO=1; done
-EXISTING_EGO="$(readlink "$BIN_DIR/ego-browser" 2>/dev/null || true)"
-if [ "$REPLACE_EGO" -eq 1 ] || [ ! -e "$BIN_DIR/ego-browser" ] || echo "$EXISTING_EGO" | grep -q "ego-linux"; then
-  ln -sf "$APP_DIR/scripts/tp-cli.sh" "$BIN_DIR/ego-browser"
-  ln -sf "$APP_DIR/scripts/tp-daemon.sh" "$BIN_DIR/ego-browserd"
-  ln -sf "$APP_DIR/scripts/tp-start.sh" "$BIN_DIR/ego-start"
-  ln -sf "$APP_DIR/scripts/tp-headed.sh" "$BIN_DIR/ego-headed"
-  ln -sf "$APP_DIR/scripts/tp-stop.sh" "$BIN_DIR/ego-stop"
-else
-  echo "  (preserved existing native $BIN_DIR/ego-browser -> $EXISTING_EGO; use tp-browser or pass --replace-ego)"
+# Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
+if [ -f "$APP_DIR/skills/tp-browser/SKILL.md" ]; then
+  for skill_root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills" "$HOME/.gemini/config/skills"; do
+    for skill_name in tp-browser ego-browser; do
+      mkdir -p "$skill_root/$skill_name" 2>/dev/null || true
+      cp -f "$APP_DIR/skills/tp-browser/SKILL.md" "$skill_root/$skill_name/SKILL.md" 2>/dev/null || true
+    done
+  done
 fi
 
 echo "=== TooPower Browser (tp-browser) Installed ($(uname -s)) ==="
 echo "  CLI:         $BIN_DIR/tp-browser  (alias: ego-browser)"
 echo "  Daemon:      $BIN_DIR/tp-browserd (alias: ego-browserd)"
-echo "  Service:     tp-start | tp-headed | tp-stop"
-echo "  Agent Skill: ~/.claude/skills/tp-browser/SKILL.md"
+echo "  Service:     tp-start | tp-headed | tp-stop (aliases: ego-start | ego-headed | ego-stop)"
+echo "  Agent Skill: ~/.claude/skills/tp-browser/SKILL.md (+ ego-browser)"
 echo "               ~/.agents/skills/tp-browser/SKILL.md"
 echo "               ~/.codex/skills/tp-browser/SKILL.md"
 echo

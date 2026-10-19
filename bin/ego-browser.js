@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'no
 import { join, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const TOKEN_FILE = join(DATA_DIR, 'token');
@@ -16,6 +17,39 @@ function osBuildTag() {
   if (process.platform === 'win32') return 'tp-win / ego-win';
   if (process.platform === 'darwin') return 'tp-mac / ego-mac';
   return 'tp-linux / ego-linux';
+}
+
+function resolveScript(unixName, winName) {
+  const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const candidates = process.platform === 'win32'
+    ? [join(DATA_DIR, 'scripts', winName), join(DATA_DIR, 'app', 'scripts', winName), join(repoRoot, 'scripts', winName)]
+    : [join(DATA_DIR, 'app', 'scripts', unixName), join(DATA_DIR, 'scripts', unixName), join(repoRoot, 'scripts', unixName)];
+  return candidates.find((p) => existsSync(p)) || candidates[0];
+}
+
+function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
+  const stdio = quietStdout ? ['ignore', process.stderr, process.stderr] : 'inherit';
+  if (process.platform === 'win32') {
+    const script = resolveScript('tp-start.sh', mode === 'stop' ? 'ego-stop.ps1' : 'ego-start.ps1');
+    const psArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script];
+    if (mode === 'headed') psArgs.push('-Headed');
+    if (mode === 'restart') psArgs.push('-Restart');
+    for (const a of extraArgs) {
+      if (a === '--headed' || a === '-Headed' || a === 'headed') psArgs.push('-Headed');
+      else if (a === '--restart' || a === '-Restart' || a === 'restart') psArgs.push('-Restart');
+      else if (a === '--alt-port' || a === '-AltPort') psArgs.push('-AltPort');
+    }
+    const r = spawnSync('powershell.exe', psArgs, { stdio });
+    return r.status ?? 0;
+  } else {
+    const script = resolveScript(mode === 'stop' ? 'tp-stop.sh' : 'tp-start.sh', 'ego-start.ps1');
+    const shArgs = [script];
+    if (mode === 'headed') shArgs.push('--headed');
+    if (mode === 'restart') shArgs.push('--restart');
+    shArgs.push(...extraArgs);
+    const r = spawnSync('/bin/sh', shArgs, { stdio });
+    return r.status ?? 0;
+  }
 }
 
 function readToken() {
@@ -54,15 +88,29 @@ async function health(port) {
   } catch { return null; }
 }
 
+async function ensureRunning() {
+  let port = readPort();
+  let h = await health(port);
+  if (h && h.ok && h.chrome) return { port, h };
+  runLauncher('start', [], true);
+  port = readPort();
+  h = await health(port);
+  return { port, h };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0] || 'help';
 
+  if (sub === 'start' || sub === '--start') { process.exitCode = runLauncher('start', argv.slice(1)); return; }
+  if (sub === 'headed' || sub === '--headed' || sub === '-Headed') { process.exitCode = runLauncher('headed', argv.slice(1)); return; }
+  if (sub === 'restart' || sub === '--restart') { process.exitCode = runLauncher('restart', argv.slice(1)); return; }
+  if (sub === 'stop' || sub === '--stop') { process.exitCode = runLauncher('stop', argv.slice(1)); return; }
   if (sub === 'nodejs') return runNodeJs(argv.slice(1));
   if (sub === 'status' || sub === 'spaces') {
     const port = readPort();
     const h = await health(port);
-    if (!h) { console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`); console.error(`Start it: tp-start  (or: node ${daemonPath()})`); process.exitCode = 2; return; }
+    if (!h) { console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`); console.error(`Start it: tp-start  (or: tp-headed)`); process.exitCode = 2; return; }
     console.log(JSON.stringify(h, null, 1));
     if (sub === 'spaces') console.log(JSON.stringify(await rpcCmd(port, 'space.list'), null, 1));
     return;
@@ -77,16 +125,18 @@ async function main() {
     else console.log('See https://github.com/YourheroBOB/tp-browser/blob/main/skills/tp-browser/SKILL.md');
     return;
   }
-  if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.0 [${osBuildTag()} — 強到沒朋友]`); return; }
+  if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
   console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
-  tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc
+  tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc (auto-starts if needed)
+  tp-browser start                  start headless background browser (alias: tp-start / ego-start)
+  tp-browser headed                 open visible GUI browser window for human login/Co-Riding (alias: tp-headed / ego-headed)
+  tp-browser stop                   stop browser & daemon (alias: tp-stop / ego-stop)
   tp-browser status                 daemon + chrome health
   tp-browser spaces                 list task spaces
   tp-browser doctor                 diagnose and print fix commands
   tp-browser skill                  print the AI Agent SKILL.md guide
-  tp-browser version                print version and platform build
-  (aliases: ego-browser, tp-start, tp-headed, tp-stop)`);
+  tp-browser version                print version and platform build`);
 }
 
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }
@@ -147,11 +197,10 @@ async function runNodeJs(args) {
   }
   code = String(code || '').replace(/^\uFEFF/, '');
 
-  const port = readPort();
-  const h = await health(port);
-  if (!h) {
+  const { port, h } = await ensureRunning();
+  if (!h || !h.ok) {
     console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`);
-    console.error('Start TooPower Browser first:  tp-start  (or: ego-start)');
+    console.error('Start TooPower Browser first:  tp-start  (or: tp-headed)');
     process.exit(2);
   }
 

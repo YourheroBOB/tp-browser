@@ -38,6 +38,8 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
       if (a === '--headed' || a === '-Headed' || a === 'headed') psArgs.push('-Headed');
       else if (a === '--restart' || a === '-Restart' || a === 'restart') psArgs.push('-Restart');
       else if (a === '--alt-port' || a === '-AltPort') psArgs.push('-AltPort');
+      else if (a === '--edge' || a === '-Edge' || a === 'edge') psArgs.push('-Edge');
+      else if (a === '--chrome' || a === '-Chrome' || a === 'chrome') psArgs.push('-Chrome');
     }
     const r = spawnSync('powershell.exe', psArgs, { stdio });
     return r.status ?? 0;

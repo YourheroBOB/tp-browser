@@ -73,12 +73,30 @@ async function attachChrome() {
       // close leftover blank tabs from previous sessions (never space-bound pages);
       // wait for auto-attach to deliver existing targets first
       await new Promise((r) => setTimeout(r, 800));
-      const bound = new Set();
-      for (const s of store.list()) for (const pg of Object.values(s.pages)) if (pg.targetId) bound.add(pg.targetId);
+      const realTabs = [];
+      const blankTabs = [];
       for (const [tid, st] of hub.sessions) {
-        if (bound.has(tid)) continue;
-        if (!st.url || st.url === 'about:blank' || st.url.startsWith('chrome://newtab') || st.url.startsWith('edge://newtab')) {
-          try { await hub.cdp.send('Target.closeTarget', { targetId: tid }); } catch {}
+        const u = String(st.url || '');
+        if (!u || u === 'about:blank' || u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab-page') || u.startsWith('edge://newtab')) {
+          blankTabs.push({ tid, st });
+        } else if (!u.startsWith('chrome://') && !u.startsWith('devtools://') && !u.startsWith('edge://')) {
+          realTabs.push({ tid, st });
+        }
+      }
+      if (realTabs.length > 0) {
+        for (const b of blankTabs) {
+          try { await hub.cdp.send('Target.closeTarget', { targetId: b.tid }); } catch {}
+        }
+        for (const r of realTabs) {
+          hub._ensureCoRideBar(r.st, true);
+        }
+      } else if (blankTabs.length > 0) {
+        const keep = blankTabs[0];
+        try {
+          await hub.cdp.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/newtab` }, { sessionId: keep.st.sessionId });
+        } catch {}
+        for (const b of blankTabs.slice(1)) {
+          try { await hub.cdp.send('Target.closeTarget', { targetId: b.tid }); } catch {}
         }
       }
       chromeReady = true;
@@ -95,12 +113,13 @@ async function rebindSpaces() {
   for (const sp of store.list()) {
     for (const [label, p] of Object.entries(sp.pages)) {
       if (p.targetId && hub.sessions.has(p.targetId)) continue;
-      try {
-        const t = await hub.cdp.send('Target.createTarget', { url: 'about:blank' });
-        store.bindPage(sp.id, label, t.targetId, p.openedBy);
-      } catch (e) { log(`rebind failed for ${sp.id}/${label}:`, e.message); }
+      delete sp.pages[label];
+    }
+    if (Object.keys(sp.pages).length === 0) {
+      store.delete(sp.id);
     }
   }
+  store.persist();
 }
 
 function requireHub() {
@@ -149,21 +168,25 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<title>⚡ TooPower Browser — 新分頁控制台</title>
+<title>⚡[TP] TooPower Browser — 人機共駕戰情中心</title>
 <style>
-  :root { --bg:#0E0C0A; --card:#171411; --amber:#C99A4B; --green:#7C8B6F; --text:#FAF6EE; --muted:#9E9589; }
+  :root { --bg:#0E0C0A; --card:#171411; --amber:#C99A4B; --green:#10B981; --text:#FAF6EE; --muted:#9E9589; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:radial-gradient(circle at 50% 0%, rgba(201,154,75,0.12), transparent 60%), var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; }
-  .wrap { max-width:760px; width:100%; text-align:center; }
-  .badge { display:inline-block; padding:5px 14px; border:1px solid rgba(201,154,75,0.4); border-radius:999px; color:var(--amber); font-size:12.5px; font-family:monospace; margin-bottom:16px; }
-  h1 { font-size:38px; letter-spacing:0.5px; margin-bottom:8px; }
+  body { background:radial-gradient(circle at 50% 0%, rgba(201,154,75,0.14), transparent 60%), var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; }
+  .wrap { max-width:820px; width:100%; text-align:center; }
+  .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 16px; border:1.5px solid rgba(16,185,129,0.55); background:rgba(16,185,129,0.12); border-radius:999px; color:#34D399; font-size:13px; font-weight:700; font-family:monospace; margin-bottom:14px; }
+  h1 { font-size:36px; letter-spacing:0.5px; margin-bottom:8px; }
   h1 span { color:var(--amber); }
-  .sub { color:var(--muted); font-size:14.5px; margin-bottom:28px; }
-  form { display:flex; gap:10px; margin-bottom:30px; }
+  .sub { color:var(--muted); font-size:14.5px; margin-bottom:20px; }
+  .indicators { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:24px; text-align:left; }
+  .ind { background:rgba(201,154,75,0.08); border:1px solid rgba(201,154,75,0.3); border-radius:10px; padding:10px 14px; font-size:12.5px; }
+  .ind b { display:block; color:var(--amber); margin-bottom:3px; font-size:13px; }
+  .ind span { color:var(--text); opacity:0.88; }
+  form { display:flex; gap:10px; margin-bottom:26px; }
   input { flex:1; background:var(--card); border:1.5px solid rgba(201,154,75,0.35); color:var(--text); padding:14px 18px; border-radius:12px; font-size:15px; outline:none; }
   input:focus { border-color:var(--amber); box-shadow:0 0 0 3px rgba(201,154,75,0.18); }
   button { background:var(--amber); color:#12100E; font-weight:700; border:none; padding:0 22px; border-radius:12px; cursor:pointer; font-size:14.5px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr)); gap:12px; text-align:left; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(175px, 1fr)); gap:12px; text-align:left; }
   .card { background:var(--card); border:1px solid rgba(255,255,255,0.08); padding:14px 16px; border-radius:12px; color:var(--text); text-decoration:none; transition:border-color 0.15s, transform 0.15s; }
   .card:hover { border-color:var(--amber); transform:translateY(-2px); }
   .card b { display:block; font-size:14px; margin-bottom:4px; color:var(--amber); }
@@ -172,14 +195,20 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div class="wrap">
-    <div class="badge">⚡ TooPower Browser v0.3.0 · 強到沒朋友</div>
-    <h1>TooPower <span>人機共乘新分頁</span></h1>
-    <p class="sub">上方原生書籤列已自動啟用 · 右下角常駐「🧑 我要接手操控 / 🤖 交還 Agent」共乘膠囊</p>
+    <div class="badge">🟢 ⚡ TooPower Browser v0.3.2 · Daemon :${PORT} / CDP :${CHROME_DEBUG_PORT} 已掛載</div>
+    <h1>⚡[TP] TooPower <span>人機共駕戰情中心</span></h1>
+    <p class="sub">看到此畫面代表本瀏覽器視窗已 100% 由 TooPower Agent Daemon 接管並掛載成功</p>
+    <div class="indicators">
+      <div class="ind"><b>指標 ①：分頁標題 ⚡[TP]</b><span>所有受控分頁與工作列縮圖均帶 ⚡[TP] 前綴</span></div>
+      <div class="ind"><b>指標 ②：頂部 4px 狀態光條</b><span>網頁最上方邊緣常駐金綠漸層發光條</span></div>
+      <div class="ind"><b>指標 ③：右下角共駕膠囊</b><span>隨時可點「🧑 我要接手」或「🔄 換帳號」</span></div>
+    </div>
     <form id="sf">
       <input id="q" type="text" placeholder="輸入網址或 Google 搜尋關鍵字，按 Enter 前往..." autofocus />
       <button type="submit">前往 →</button>
     </form>
     <div class="grid">
+      <a class="card" href="https://outlook.live.com/mail/0/"><b>Outlook / Hotmail</b><span>微軟個人與事務所信箱</span></a>
       <a class="card" href="https://www.perplexity.ai/"><b>Perplexity Pro</b><span>AI 搜尋與模型委員會</span></a>
       <a class="card" href="https://chatgpt.com/"><b>ChatGPT / Dots</b><span>OpenAI 旗艦工作區</span></a>
       <a class="card" href="https://claude.ai/"><b>Claude</b><span>Anthropic 深度推理</span></a>
@@ -187,7 +216,6 @@ const NEWTAB_HTML = `<!DOCTYPE html>
       <a class="card" href="https://fugu.sakana.ai/"><b>Sakana FUGU</b><span>FUGU Max / Ultra</span></a>
       <a class="card" href="https://www.genspark.ai/"><b>Genspark</b><span>AI 超級代理工作區</span></a>
       <a class="card" href="https://github.com/YourheroBOB/tp-browser"><b>GitHub 開源倉庫</b><span>YourheroBOB/tp-browser</span></a>
-      <a class="card" href="https://www.youtube.com/@YourHeroBob"><b>市井律師BOB-嚴律</b><span>嚴柏顯律師官方 YouTube</span></a>
     </div>
   </div>
   <script>

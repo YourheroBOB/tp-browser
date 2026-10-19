@@ -126,6 +126,14 @@ spawn_detached() {
   ' "$LOG_FILE" "$@"
 }
 
+# Launch daemon FIRST so http://127.0.0.1:$DAEMON_PORT/newtab is ready when headed window opens
+if [ "$ALT_PORT" -eq 1 ]; then
+  spawn_detached "$LOGS_DIR/daemon.log" node --experimental-websocket "$DAEMON_JS" --alt-port
+else
+  spawn_detached "$LOGS_DIR/daemon.log" node --experimental-websocket "$DAEMON_JS"
+fi
+sleep 0.3
+
 # Launch Chrome/Chromium bound strictly to 127.0.0.1
 if [ "$HEADED" -eq 1 ]; then
   spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" \
@@ -139,7 +147,7 @@ if [ "$HEADED" -eq 1 ]; then
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
     --noerrdialogs --disable-popup-blocking --disable-extensions \
-    about:blank
+    "http://127.0.0.1:$DAEMON_PORT/newtab"
 else
   spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new \
     --no-first-run --no-default-browser-check \
@@ -155,22 +163,6 @@ else
     about:blank
 fi
 
-# Wait up to 8s for Chrome DevTools endpoint
-i=0
-while [ $i -lt 16 ]; do
-  if curl -fsS --max-time 1 "http://127.0.0.1:$CHROME_PORT/json/version" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.5
-  i=$((i + 1))
-done
-
-if [ "$ALT_PORT" -eq 1 ]; then
-  spawn_detached "$LOGS_DIR/daemon.log" node --experimental-websocket "$DAEMON_JS" --alt-port
-else
-  spawn_detached "$LOGS_DIR/daemon.log" node --experimental-websocket "$DAEMON_JS"
-fi
-
 # Wait up to 10s for daemon + chrome attachment
 i=0
 while [ $i -lt 20 ]; do
@@ -179,6 +171,9 @@ while [ $i -lt 20 ]; do
     MODE="headless"
     [ "$HEADED" -eq 1 ] && MODE="headed"
     echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$OS, mode=$MODE)"
+    if [ "$HEADED" -eq 1 ]; then
+      echo "TP_INDICATORS: [1] Tab Title Prefix: ⚡[TP] | [2] Top 4px Gold-Green Strip | [3] Bottom-Right ⚡ TooPower Capsule"
+    fi
     exit 0
   fi
   sleep 0.5

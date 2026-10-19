@@ -19,9 +19,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch {}
 (function(){
   if (window !== window.top) return;
-  if (!/^(https?|file):$/i.test(location.protocol)) return;
+  if (!/^(https?|file|about):$/i.test(location.protocol)) return;
+  function syncTpTitle() {
+    try {
+      const t = String(document.title || '').trim();
+      if (!t) {
+        document.title = '⚡[TP] TooPower Browser';
+      } else if (!t.startsWith('⚡[TP]')) {
+        document.title = '⚡[TP] ' + t;
+      }
+    } catch {}
+  }
   function mountTpBar() {
     try {
+      syncTpTitle();
       const parent = document.body || document.documentElement;
       if (!parent || document.getElementById('__tp_coride_host')) return;
       const host = document.createElement('div');
@@ -41,7 +52,8 @@ const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', {
         const isHuman = mode === 'human';
         const style = document.createElement('style');
         style.textContent = [
-          '.bar { display:flex; align-items:center; gap:8px; background:rgba(18,16,14,0.96); border:1.5px solid ' + (isHuman ? '#7C8B6F' : '#C99A4B') + '; color:#FAF6EE; padding:' + (min ? '8px 12px' : '10px 15px') + '; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }',
+          '.top-strip { position:fixed; top:0; left:0; right:0; height:4px; z-index:2147483647; pointer-events:none; background:' + (isHuman ? 'linear-gradient(90deg, #F59E0B 0%, #8FB379 50%, #F59E0B 100%)' : 'linear-gradient(90deg, #C99A4B 0%, #10B981 50%, #C99A4B 100%)') + '; box-shadow:0 1px 10px rgba(201,154,75,0.75); }',
+          '.bar { display:flex; align-items:center; gap:8px; background:rgba(18,16,14,0.96); border:2px solid ' + (isHuman ? '#8FB379' : '#C99A4B') + '; color:#FAF6EE; padding:' + (min ? '8px 12px' : '10px 16px') + '; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 12px 32px rgba(0,0,0,0.65); backdrop-filter:blur(10px); user-select:none; }',
           '.brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }',
           '.status { color:' + (isHuman ? '#A8C296' : '#E6C786') + '; font-size:12px; padding:3px 8px; border-radius:999px; background:' + (isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)') + '; }',
           'button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 12px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:' + (isHuman ? '#8FB379' : '#C99A4B') + '; transition:transform 0.12s,filter 0.15s; }',
@@ -52,6 +64,10 @@ const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', {
           'button.min:hover { color:#FAF6EE; }'
         ].join('\\n');
         root.appendChild(style);
+
+        const strip = document.createElement('div');
+        strip.className = 'top-strip';
+        root.appendChild(strip);
 
         const bar = document.createElement('div');
         bar.className = 'bar';
@@ -72,7 +88,7 @@ const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', {
         if (!min) {
           const st = document.createElement('span');
           st.className = 'status';
-          st.textContent = isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命';
+          st.textContent = isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🟢 Agent 共乘待命';
           bar.appendChild(st);
 
           const btn = document.createElement('button');
@@ -129,7 +145,7 @@ export class BrowserHub {
     this.downloadsDir = downloadsDir;
     this.onPush = onPush; // fn(targetId, kind, payload)
     this.daemonPort = daemonPort || 9772;
-    this.sessions = new Map(); // targetId -> {sessionId, mainFrameId, frames:Set, net:Set, events:[], dialogs:[], choosers:[], title, url, modBits}
+    this.sessions = new Map(); // targetId -> {sessionId, mainFrameId, frames:Set, net:Set, title, url, modBits}
     this.downloads = new Map(); // guid -> record
     this.popupsSeen = []; // {targetId, openerId, at}
     this._wire();

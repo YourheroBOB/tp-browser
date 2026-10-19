@@ -78,12 +78,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\share\
 
 $HeadedCmd = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\share\ego-linux\scripts\ego-start.ps1" -Headed
+powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\share\ego-linux\scripts\ego-start.ps1" -Headed %*
 '@
 
 $StopCmd = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\share\ego-linux\scripts\ego-stop.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\share\ego-linux\scripts\ego-stop.ps1" %*
 '@
 
 foreach ($dir in @($LocalBin, $HomeBin)) {

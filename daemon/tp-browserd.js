@@ -69,10 +69,9 @@ async function attachChrome() {
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
       log('attached to Chromium:', wsUrl);
       cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
-      await rebindSpaces();
-      // close leftover blank tabs from previous sessions (never space-bound pages);
-      // wait for auto-attach to deliver existing targets first
+      // wait for auto-attach to deliver existing targets first, then prune dead spaces & blank tabs
       await new Promise((r) => setTimeout(r, 800));
+      await rebindSpaces();
       const realTabs = [];
       const blankTabs = [];
       for (const [tid, st] of hub.sessions) {
@@ -116,7 +115,7 @@ async function rebindSpaces() {
       delete sp.pages[label];
     }
     if (Object.keys(sp.pages).length === 0) {
-      store.delete(sp.id);
+      store.deleteSpace(sp.id);
     }
   }
   store.persist();

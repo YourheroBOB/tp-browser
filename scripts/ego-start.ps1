@@ -140,8 +140,8 @@ Start-Sleep -Milliseconds 400
 
 # 7. Launch Chrome/Edge with CDP on $ChromePort
 $StartUrl = if ($Headed) { "http://127.0.0.1:$DaemonPort/newtab" } else { "about:blank" }
-$GuiMarker = if ($Headed) { " --tp-interactive-gui=1" } else { "" }
-$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --noerrdialogs --disable-popup-blocking --disable-extensions --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate$GuiMarker $StartUrl"
+$GuiMarker = if ($Headed) { " --tp-interactive-gui=1" } else { " --disable-extensions" }
+$CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --noerrdialogs --disable-popup-blocking --disable-quic --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate$GuiMarker $StartUrl"
 $CurrentSessionId = (Get-Process -Id $PID).SessionId
 
 if (-not $Headed) {

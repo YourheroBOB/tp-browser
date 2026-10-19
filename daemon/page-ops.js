@@ -16,24 +16,25 @@ export class EgoError extends Error {
 const BTN = { left: 'left', right: 'right', middle: 'middle' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch {}
-(function(){
+const CORIDE_BAR_SCRIPT = `(function(){
   if (window !== window.top) return;
-  if (!/^(https?|file|about):$/i.test(location.protocol)) return;
+  try { if (window.opener && window.opener !== window) return; } catch {}
+  if (!/^(https?|file):$/i.test(location.protocol)) return;
+  if (location.href === 'about:blank' || location.href.startsWith('about:')) return;
   function syncTpTitle() {
     try {
+      if (document.readyState === 'loading' || !document.body) return;
       const t = String(document.title || '').trim();
-      if (!t) {
-        document.title = '⚡[TP] TooPower Browser';
-      } else if (!t.startsWith('⚡[TP]')) {
+      if (t && !t.startsWith('⚡[TP]')) {
         document.title = '⚡[TP] ' + t;
       }
     } catch {}
   }
   function mountTpBar() {
     try {
+      if (document.readyState === 'loading' || !document.body) return;
       syncTpTitle();
-      const parent = document.body || document.documentElement;
+      const parent = document.body;
       if (!parent || document.getElementById('__tp_coride_host')) return;
       const host = document.createElement('div');
       host.id = '__tp_coride_host';
@@ -132,9 +133,9 @@ const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountTpBar, { once: true });
   else mountTpBar();
-  setTimeout(mountTpBar, 500);
+  setTimeout(mountTpBar, 600);
   if (!window.__tpCoRideTimer) {
-    window.__tpCoRideTimer = setInterval(mountTpBar, 1500);
+    window.__tpCoRideTimer = setInterval(mountTpBar, 1800);
   }
 })();`;
 
@@ -150,15 +151,32 @@ export class BrowserHub {
     this.popupsSeen = []; // {targetId, openerId, at}
     this._wire();
     this._sweepTimer = setInterval(() => {
-      for (const [, st] of this.sessions) {
-        this._ensureCoRideBar(st, true);
+      const now = Date.now();
+      const totalTabs = this.sessions.size;
+      for (const [tid, st] of this.sessions) {
+        const u = String(st.url || '');
+        const isBlank = !u || u === 'about:blank';
+        if (st.isPopup) {
+          // If an OAuth/window.open popup got stuck on about:blank for >6s with no pending network activity, auto-close it
+          if (isBlank && st.net.size === 0 && (now - (st.attachedAt || now)) > 6000) {
+            this.cdp.send('Target.closeTarget', { targetId: tid }).catch(() => {});
+          }
+          continue;
+        }
+        if (isBlank && !st.agentNavigating && totalTabs > 1 && (now - (st.attachedAt || now)) > 5000) {
+          this.cdp.send('Target.closeTarget', { targetId: tid }).catch(() => {});
+          continue;
+        }
+        if (st.domReady) {
+          this._ensureCoRideBar(st, true);
+        }
       }
     }, 2000);
     if (this._sweepTimer.unref) this._sweepTimer.unref();
   }
 
   _ensureCoRideBar(st, isDomReady = false) {
-    if (!st) return;
+    if (!st || st.isPopup) return;
     const u = String(st.url || '');
     if (u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab-page') || u.startsWith('edge://newtab')) {
       if (!st._newtabRedirectTimer && !st.agentNavigating) {
@@ -172,7 +190,10 @@ export class BrowserHub {
       }
       return;
     }
-    if (isDomReady && !u.startsWith('chrome://') && !u.startsWith('devtools://') && !u.startsWith('edge://')) {
+    if (!u || u === 'about:blank' || u.startsWith('about:') || u.startsWith('chrome://') || u.startsWith('devtools://') || u.startsWith('edge://')) {
+      return;
+    }
+    if (isDomReady) {
       this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId: st.sessionId }).catch(() => {});
     }
   }
@@ -235,15 +256,25 @@ export class BrowserHub {
         if (st.sessionId === sessionId) { this._sessionEvent(tid, st, method, params); return; }
       }
     });
-    cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {});
+    // IMPORTANT: Do NOT use Browser-level Target.setAutoAttach!
+    // In Chromium, Browser-level Target.setAutoAttach hooks WebContentsCreated inside synchronous window.open(),
+    // which intercepts OAuth popups (Google/Microsoft/Apple login) at url="" / about:blank and stalls their navigation!
+    // Instead, use Target.setDiscoverTargets and selectively attach ONLY to non-popup top-level page targets.
     cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
     cdp.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', eventsEnabled: true, downloadPath: this.downloadsDir }).catch(() => {});
+    // ONLY override User-Agent when running in HeadlessChrome mode!
+    // In headed mode, the real Chrome/Edge binary already has 100% authentic UA + Client Hints,
+    // and overriding them via CDP breaks hCaptcha/Cloudflare/OAuth client attestation!
     this._cleanUaPromise = cdp.send('Browser.getVersion').then((v) => {
-      const userAgent = (v?.userAgent || '').replace('HeadlessChrome/', 'Chrome/');
+      const rawUa = v?.userAgent || '';
+      if (!/Headless/i.test(rawUa)) return null;
+      const userAgent = rawUa.replace('HeadlessChrome/', 'Chrome/');
       const fullVer = (v?.product || 'Chrome/155.0.0.0').split('/')[1] || '155.0.0.0';
       const majorVer = fullVer.split('.')[0] || '155';
       const isWin = /Windows/i.test(userAgent);
       const isMac = /Macintosh/i.test(userAgent);
+      const isEdge = /Edg\//i.test(userAgent);
+      const brandName = isEdge ? 'Microsoft Edge' : 'Google Chrome';
       const platform = isWin ? 'Windows' : (isMac ? 'macOS' : 'Linux');
       const platformVersion = isWin ? '15.0.0' : (isMac ? '15.0.0' : '6.8.0');
       const arch = isMac && process.arch === 'arm64' ? 'arm' : 'x86';
@@ -251,12 +282,12 @@ export class BrowserHub {
         brands: [
           { brand: 'Not_A Brand', version: '24' },
           { brand: 'Chromium', version: majorVer },
-          { brand: 'Google Chrome', version: majorVer },
+          { brand: brandName, version: majorVer },
         ],
         fullVersionList: [
           { brand: 'Not_A Brand', version: '24.0.0.0' },
           { brand: 'Chromium', version: fullVer },
-          { brand: 'Google Chrome', version: fullVer },
+          { brand: brandName, version: fullVer },
         ],
         platform,
         platformVersion,
@@ -273,16 +304,27 @@ export class BrowserHub {
   async _browserEvent(method, params) {
     if (method === 'Target.attachedToTarget') {
       const { sessionId, targetInfo } = params;
-      if (targetInfo.type !== 'page') { try { await this.cdp.send('Runtime.run', {}, { sessionId }); } catch {} return; }
+      if (targetInfo.type !== 'page') {
+        try { await this.cdp.send('Runtime.runIfWaitingForDebugger', {}, { sessionId }); } catch {}
+        return;
+      }
+      const isPopup = Boolean(targetInfo.openerId);
+      if (isPopup && !(this.adoptedPopups && this.adoptedPopups.has(targetInfo.targetId))) {
+        try { await this.cdp.send('Runtime.runIfWaitingForDebugger', {}, { sessionId }); } catch {}
+        try { await this.cdp.send('Target.detachFromTarget', { sessionId }); } catch {}
+        return;
+      }
+      const curUrl = targetInfo.url || '';
+      const isAlreadyLoaded = Boolean(curUrl && curUrl !== 'about:blank' && !curUrl.startsWith('about:'));
       const st = {
         sessionId, targetInfo, mainFrameId: null, frames: new Set(),
         net: new Set(), netQuietAt: Date.now(), events: [], dialogs: [], choosers: [],
-        title: targetInfo.title || '', url: targetInfo.url || '', modBits: 0, interceptingChooser: false, uaCleaned: false,
+        title: targetInfo.title || '', url: curUrl, modBits: 0, interceptingChooser: false, uaCleaned: false,
+        isPopup: false, attachedAt: Date.now(), domReady: isAlreadyLoaded,
       };
       this.sessions.set(targetInfo.targetId, st);
       const opts = { sessionId };
       await Promise.all(['Page.enable', 'Runtime.enable', 'DOM.enable', 'Network.enable'].map((x) => this.cdp.send(x, {}, opts).catch(() => {})));
-      await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, opts).catch(() => {});
       if (this._cleanUaPromise) {
         this._cleanUaPromise.then((uaInfo) => {
           if (uaInfo && uaInfo.userAgent) {
@@ -293,14 +335,20 @@ export class BrowserHub {
       }
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
       await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
-      this._ensureCoRideBar(st, true);
+      if (isAlreadyLoaded) {
+        this._ensureCoRideBar(st, true);
+      }
       return;
     }
     if (method === 'Target.targetCreated') {
       const ti = params.targetInfo;
-      if (ti.type === 'page' && ti.openerId) {
-        this.popupsSeen.push({ targetId: ti.targetId, openerId: ti.openerId, at: Date.now() });
-        this.onPush(ti.openerId, 'popup', { targetId: ti.targetId, openerId: ti.openerId });
+      if (ti.type === 'page') {
+        if (ti.openerId) {
+          this.popupsSeen.push({ targetId: ti.targetId, openerId: ti.openerId, at: Date.now() });
+          this.onPush(ti.openerId, 'popup', { targetId: ti.targetId, openerId: ti.openerId });
+        } else if (!this.sessions.has(ti.targetId)) {
+          this.cdp.send('Target.attachToTarget', { targetId: ti.targetId, flatten: true }).catch(() => {});
+        }
       }
       return;
     }
@@ -334,16 +382,19 @@ export class BrowserHub {
         if (!params.frame.parentId) {
           st.mainFrameId = params.frame.id;
           st.url = params.frame.url || '';
+          st.domReady = false;
           if (params.frame.name) st.title = params.frame.name;
           this._ensureCoRideBar(st, false);
         }
         return;
       case 'Page.domContentEventFired':
       case 'Page.loadEventFired':
+        st.domReady = true;
         this._ensureCoRideBar(st, true);
         return;
       case 'Page.navigatedWithinDocument':
         st.url = params.url;
+        st.domReady = true;
         this._ensureCoRideBar(st, true);
         return;
       case 'Page.downloadWillBegin':

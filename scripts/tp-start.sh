@@ -146,7 +146,7 @@ if [ "$HEADED" -eq 1 ]; then
     --disable-background-timer-throttling \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
-    --noerrdialogs --disable-popup-blocking --disable-extensions \
+    --noerrdialogs --disable-popup-blocking --disable-quic \
     "http://127.0.0.1:$DAEMON_PORT/newtab"
 else
   spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new \
@@ -159,7 +159,7 @@ else
     --disable-background-timer-throttling \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
-    --noerrdialogs --disable-popup-blocking --disable-extensions \
+    --noerrdialogs --disable-popup-blocking --disable-extensions --disable-quic \
     about:blank
 fi
 

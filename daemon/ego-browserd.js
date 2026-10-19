@@ -366,8 +366,15 @@ async function dispatch(method, p) {
       return { label, targetId: t.targetId };
     }
     case 'page.adopt': {
+      const h = requireHub();
       const sp = store.get(p.spaceId);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.spaceId}`);
+      if (!h.sessions.has(p.targetId)) {
+        if (!h.adoptedPopups) h.adoptedPopups = new Set();
+        h.adoptedPopups.add(p.targetId);
+        await h.cdp.send('Target.attachToTarget', { targetId: p.targetId, flatten: true }).catch(() => {});
+        await waitSession(p.targetId);
+      }
       const label = p.as || store.nextLabel(sp.id);
       store.addPage(sp.id, label, p.targetId, 'agent');
       return { label, targetId: p.targetId };
@@ -400,9 +407,28 @@ function resolveSpace(idOrName) {
 async function syncSpaceTargets(spaceId) {
   const h = requireHub();
   const sp = store.get(spaceId);
+  const bound = new Set();
+  for (const s2 of store.list()) {
+    for (const pg2 of Object.values(s2.pages)) {
+      if (pg2.targetId) bound.add(pg2.targetId);
+    }
+  }
   for (const [label, pg] of Object.entries(sp.pages)) {
     if (pg.targetId && h.sessions.has(pg.targetId)) continue;
+    let reusedTid = null;
+    for (const [tid, st] of h.sessions) {
+      if (!bound.has(tid) && !st.isPopup && (!st.url || st.url === 'about:blank')) {
+        reusedTid = tid;
+        bound.add(tid);
+        break;
+      }
+    }
+    if (reusedTid) {
+      store.bindPage(spaceId, label, reusedTid, pg.openedBy);
+      continue;
+    }
     const t = await h.cdp.send('Target.createTarget', { url: 'about:blank' });
+    bound.add(t.targetId);
     store.bindPage(spaceId, label, t.targetId, pg.openedBy);
     await waitSession(t.targetId);
   }

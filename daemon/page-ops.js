@@ -16,63 +16,110 @@ export class EgoError extends Error {
 const BTN = { left: 'left', right: 'right', middle: 'middle' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const CORIDE_BAR_SCRIPT = `Object.defineProperty(navigator, 'webdriver', { get: () => false });
+const CORIDE_BAR_SCRIPT = `try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch {}
 (function(){
   if (window !== window.top) return;
+  if (!/^(https?|file):$/i.test(location.protocol)) return;
   function mountTpBar() {
-    if (!document.documentElement || document.getElementById('__tp_coride_host')) return;
-    const host = document.createElement('div');
-    host.id = '__tp_coride_host';
-    host.setAttribute('aria-hidden', 'true');
-    host.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483647;pointer-events:auto;';
-    const root = host.attachShadow({ mode: 'open' });
-    let mode = sessionStorage.getItem('__tp_coride_mode') || 'agent';
-    let min = sessionStorage.getItem('__tp_coride_min') === '1';
-    const render = () => {
-      const isHuman = mode === 'human';
-      root.innerHTML = \`<style>
-        .bar { display:flex; align-items:center; gap:8px; background:rgba(18,16,14,0.96); border:1.5px solid \${isHuman ? '#7C8B6F' : '#C99A4B'}; color:#FAF6EE; padding:\${min ? '8px 12px' : '10px 15px'}; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }
-        .brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }
-        .status { color:\${isHuman ? '#A8C296' : '#E6C786'}; font-size:12px; padding:3px 8px; border-radius:999px; background:\${isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)'}; }
-        button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 12px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:\${isHuman ? '#8FB379' : '#C99A4B'}; transition:transform 0.12s,filter 0.15s; }
-        button.act:hover { filter:brightness(1.1); transform:translateY(-1px); }
-        button.sub { cursor:pointer; border:1px solid rgba(201,154,75,0.45); border-radius:999px; padding:5px 10px; font:600 11.5px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#E6C786; background:rgba(201,154,75,0.12); transition:background 0.15s; }
-        button.sub:hover { background:rgba(201,154,75,0.26); color:#FAF6EE; }
-        button.min { cursor:pointer; border:none; background:transparent; color:#9E9589; font-size:13px; padding:2px 6px; }
-        button.min:hover { color:#FAF6EE; }
-      </style>
-      <div class="bar">
-        <span class="brand" id="tp-expand" title="TooPower Browser — 強到沒朋友">⚡ TooPower</span>
-        \${min ? '' : \`
-          <span class="status" id="tp-st">\${isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命'}</span>
-          <button class="act" id="tp-btn">\${isHuman ? '🤖 完成並交還 Agent' : '🧑 我要接手操控'}</button>
-          <button class="sub" id="tp-reset-auth" title="清除本站舊登入 Cookie 並強制跳出帳號選擇器（解決 Hotmail/Google 自動帶錯帳號被擋）">🔄 換帳號</button>
-        \`}
-        <button class="min" id="tp-min" title="收合/展開">\${min ? '展開' : '—'}</button>
-      </div>\`;
-      const btn = root.getElementById('tp-btn');
-      if (btn) btn.onclick = () => {
-        mode = (mode === 'agent') ? 'human' : 'agent';
-        sessionStorage.setItem('__tp_coride_mode', mode);
-        try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ mode })); } catch {}
-        render();
+    try {
+      const parent = document.body || document.documentElement;
+      if (!parent || document.getElementById('__tp_coride_host')) return;
+      const host = document.createElement('div');
+      host.id = '__tp_coride_host';
+      host.setAttribute('aria-hidden', 'true');
+      host.style.cssText = 'position:fixed !important;bottom:18px !important;right:18px !important;z-index:2147483647 !important;pointer-events:auto !important;display:block !important;';
+      const root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
+      let mode = 'agent';
+      let min = false;
+      try {
+        mode = sessionStorage.getItem('__tp_coride_mode') || 'agent';
+        min = sessionStorage.getItem('__tp_coride_min') === '1';
+      } catch {}
+
+      const render = () => {
+        while (root.firstChild) root.removeChild(root.firstChild);
+        const isHuman = mode === 'human';
+        const style = document.createElement('style');
+        style.textContent = [
+          '.bar { display:flex; align-items:center; gap:8px; background:rgba(18,16,14,0.96); border:1.5px solid ' + (isHuman ? '#7C8B6F' : '#C99A4B') + '; color:#FAF6EE; padding:' + (min ? '8px 12px' : '10px 15px') + '; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }',
+          '.brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }',
+          '.status { color:' + (isHuman ? '#A8C296' : '#E6C786') + '; font-size:12px; padding:3px 8px; border-radius:999px; background:' + (isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)') + '; }',
+          'button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 12px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:' + (isHuman ? '#8FB379' : '#C99A4B') + '; transition:transform 0.12s,filter 0.15s; }',
+          'button.act:hover { filter:brightness(1.1); transform:translateY(-1px); }',
+          'button.sub { cursor:pointer; border:1px solid rgba(201,154,75,0.45); border-radius:999px; padding:5px 10px; font:600 11.5px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#E6C786; background:rgba(201,154,75,0.12); transition:background 0.15s; }',
+          'button.sub:hover { background:rgba(201,154,75,0.26); color:#FAF6EE; }',
+          'button.min { cursor:pointer; border:none; background:transparent; color:#9E9589; font-size:13px; padding:2px 6px; }',
+          'button.min:hover { color:#FAF6EE; }'
+        ].join('\\n');
+        root.appendChild(style);
+
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+
+        const brand = document.createElement('span');
+        brand.className = 'brand';
+        brand.title = 'TooPower Browser — 強到沒朋友';
+        brand.textContent = '⚡ TooPower';
+        if (min) {
+          brand.onclick = () => {
+            min = false;
+            try { sessionStorage.setItem('__tp_coride_min', '0'); } catch {}
+            render();
+          };
+        }
+        bar.appendChild(brand);
+
+        if (!min) {
+          const st = document.createElement('span');
+          st.className = 'status';
+          st.textContent = isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命';
+          bar.appendChild(st);
+
+          const btn = document.createElement('button');
+          btn.className = 'act';
+          btn.textContent = isHuman ? '🤖 完成並交還 Agent' : '🧑 我要接手操控';
+          btn.onclick = () => {
+            mode = (mode === 'agent') ? 'human' : 'agent';
+            try { sessionStorage.setItem('__tp_coride_mode', mode); } catch {}
+            try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ mode })); } catch {}
+            render();
+          };
+          bar.appendChild(btn);
+
+          const rstBtn = document.createElement('button');
+          rstBtn.className = 'sub';
+          rstBtn.title = '清除本站舊登入 Cookie 並強制跳出帳號選擇器（解決 Hotmail/Google 自動帶錯帳號被擋）';
+          rstBtn.textContent = '🔄 換帳號';
+          rstBtn.onclick = () => {
+            rstBtn.textContent = '清除中...';
+            try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ action: 'resetSiteAuth', url: location.href })); } catch {}
+          };
+          bar.appendChild(rstBtn);
+        }
+
+        const minBtn = document.createElement('button');
+        minBtn.className = 'min';
+        minBtn.title = '收合/展開';
+        minBtn.textContent = min ? '展開' : '—';
+        minBtn.onclick = () => {
+          min = !min;
+          try { sessionStorage.setItem('__tp_coride_min', min ? '1' : '0'); } catch {}
+          render();
+        };
+        bar.appendChild(minBtn);
+
+        root.appendChild(bar);
       };
-      const rstBtn = root.getElementById('tp-reset-auth');
-      if (rstBtn) rstBtn.onclick = () => {
-        rstBtn.textContent = '清除中...';
-        try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ action: 'resetSiteAuth', url: location.href })); } catch {}
-      };
-      const minBtn = root.getElementById('tp-min');
-      if (minBtn) minBtn.onclick = () => { min = !min; sessionStorage.setItem('__tp_coride_min', min ? '1' : '0'); render(); };
-      const exp = root.getElementById('tp-expand');
-      if (exp && min) exp.onclick = () => { min = false; sessionStorage.setItem('__tp_coride_min', '0'); render(); };
-    };
-    render();
-    document.documentElement.appendChild(host);
+      render();
+      parent.appendChild(host);
+    } catch {}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountTpBar, { once: true });
   else mountTpBar();
-  setTimeout(mountTpBar, 600);
+  setTimeout(mountTpBar, 500);
+  if (!window.__tpCoRideTimer) {
+    window.__tpCoRideTimer = setInterval(mountTpBar, 1500);
+  }
 })();`;
 
 export class BrowserHub {
@@ -86,6 +133,12 @@ export class BrowserHub {
     this.downloads = new Map(); // guid -> record
     this.popupsSeen = []; // {targetId, openerId, at}
     this._wire();
+    this._sweepTimer = setInterval(() => {
+      for (const [, st] of this.sessions) {
+        this._ensureCoRideBar(st, true);
+      }
+    }, 2000);
+    if (this._sweepTimer.unref) this._sweepTimer.unref();
   }
 
   _ensureCoRideBar(st, isDomReady = false) {
@@ -103,7 +156,7 @@ export class BrowserHub {
       }
       return;
     }
-    if (isDomReady && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('file://'))) {
+    if (isDomReady && !u.startsWith('chrome://') && !u.startsWith('devtools://') && !u.startsWith('edge://')) {
       this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId: st.sessionId }).catch(() => {});
     }
   }

@@ -147,6 +147,13 @@ tp-browser nodejs < tests/smoke.ego.js
 
 ---
 
-## 📄 開源授權（License）
+## 📄 開源授權（License）與創始作者
 
 本專案採用 **[Apache License 2.0](./LICENSE)** 開源授權。任何衍生作品、修改或商業整合均免費開放，惟再散布時須依 Apache-2.0 第 4(d) 條保留 [`NOTICE`](./NOTICE) 檔案中之 TooPower Browser 原創歸屬聲明與 EGo Browser 概念啟發致敬。
+
+### 👨‍⚖️ 創始作者與官方頻道（Founder & Creator）
+- **創始作者**：**嚴柏顯律師（BOB）**｜**弘人法律事務所**主持律師
+- **YouTube 官方頻道**：[**📺 市井律師BOB-嚴律 (`@YourHeroBob`)**](https://www.youtube.com/@YourHeroBob)
+- **開源主倉庫**：[https://github.com/YourheroBOB/tp-browser](https://github.com/YourheroBOB/tp-browser)
+- **線上產品介紹頁**：[https://yourherobob.github.io/tp-browser/](https://yourherobob.github.io/tp-browser/)
+

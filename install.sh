@@ -1,26 +1,45 @@
 #!/bin/sh
 # TooPower Browser (tp-browser / ego-browser) installer for macOS & Linux
-# Copies the runtime into ~/.local/share/ego-linux/app and links CLI & service
-# commands into ~/.local/bin.
+# Supports both local checkout (`./install.sh`) and 1-line remote pipe:
+#   curl -fsSL https://raw.githubusercontent.com/YourheroBOB/tp-browser/main/install.sh | bash
+# Automatically installs CLI, Daemon, Service scripts, AND universal AI Agent SKILL.md!
 set -eu
 
-SRC="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="$HOME/.local/share/ego-linux"
 APP_DIR="$DATA_DIR/app"
 BIN_DIR="$HOME/.local/bin"
+
+TMP_CLONE=""
+cleanup() {
+  if [ -n "$TMP_CLONE" ] && [ -d "$TMP_CLONE" ]; then
+    rm -rf "$TMP_CLONE"
+  fi
+}
+trap cleanup EXIT
+
+SCRIPT_DIR="$(cd "$(dirname "$0" 2>/dev/null || echo .)" && pwd)"
+if [ -f "$SCRIPT_DIR/bin/tp-browser.js" ] && [ -f "$SCRIPT_DIR/daemon/ego-browserd.js" ]; then
+  SRC="$SCRIPT_DIR"
+else
+  echo "=== Downloading TooPower Browser (tp-browser) from GitHub ==="
+  TMP_CLONE="$(mktemp -d /tmp/tp-browser-install-XXXXXX)"
+  git clone --depth 1 https://github.com/YourheroBOB/tp-browser.git "$TMP_CLONE"
+  SRC="$TMP_CLONE"
+fi
 
 mkdir -p "$DATA_DIR" "$APP_DIR" "$BIN_DIR" "$DATA_DIR/profile-agent" "$DATA_DIR/logs"
 chmod 700 "$DATA_DIR" 2>/dev/null || true
 
 # Copy fresh runtime
-rm -rf "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests"
-mkdir -p "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests"
+rm -rf "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills"
+mkdir -p "$APP_DIR/bin" "$APP_DIR/daemon" "$APP_DIR/lib" "$APP_DIR/scripts" "$APP_DIR/tools" "$APP_DIR/tests" "$APP_DIR/skills/tp-browser"
 cp "$SRC/bin/"*.js "$APP_DIR/bin/"
 cp "$SRC/daemon/"*.js "$APP_DIR/daemon/"
 cp "$SRC/lib/"*.js "$APP_DIR/lib/"
 cp "$SRC/scripts/"* "$APP_DIR/scripts/" 2>/dev/null || true
 cp "$SRC/tools/"*.js "$APP_DIR/tools/" 2>/dev/null || true
 cp "$SRC/tests/"*.mjs "$APP_DIR/tests/" 2>/dev/null || true
+[ -f "$SRC/skills/tp-browser/SKILL.md" ] && cp "$SRC/skills/tp-browser/SKILL.md" "$APP_DIR/skills/tp-browser/SKILL.md"
 [ -f "$SRC/package.json" ] && cp "$SRC/package.json" "$APP_DIR/"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$APP_DIR/"
 [ -f "$SRC/NOTICE" ] && cp "$SRC/NOTICE" "$APP_DIR/"
@@ -52,6 +71,14 @@ ln -sf "$APP_DIR/scripts/tp-start.sh" "$BIN_DIR/tp-start"
 ln -sf "$APP_DIR/scripts/tp-headed.sh" "$BIN_DIR/tp-headed"
 ln -sf "$APP_DIR/scripts/tp-stop.sh" "$BIN_DIR/tp-stop"
 
+# Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
+if [ -f "$APP_DIR/skills/tp-browser/SKILL.md" ]; then
+  for skill_root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills"; do
+    mkdir -p "$skill_root/tp-browser" 2>/dev/null || true
+    cp -f "$APP_DIR/skills/tp-browser/SKILL.md" "$skill_root/tp-browser/SKILL.md" 2>/dev/null || true
+  done
+fi
+
 # Only install ego-* compatibility aliases if native macOS EGo Browser is not present (or --replace-ego is passed)
 REPLACE_EGO=0
 for arg in "$@"; do [ "$arg" = "--replace-ego" ] && REPLACE_EGO=1; done
@@ -67,11 +94,15 @@ else
 fi
 
 echo "=== TooPower Browser (tp-browser) Installed ($(uname -s)) ==="
-echo "  CLI:      $BIN_DIR/tp-browser  (alias: ego-browser)"
-echo "  Daemon:   $BIN_DIR/tp-browserd (alias: ego-browserd)"
-echo "  Service:  tp-start | tp-headed | tp-stop"
+echo "  CLI:         $BIN_DIR/tp-browser  (alias: ego-browser)"
+echo "  Daemon:      $BIN_DIR/tp-browserd (alias: ego-browserd)"
+echo "  Service:     tp-start | tp-headed | tp-stop"
+echo "  Agent Skill: ~/.claude/skills/tp-browser/SKILL.md"
+echo "               ~/.agents/skills/tp-browser/SKILL.md"
+echo "               ~/.codex/skills/tp-browser/SKILL.md"
 echo
 echo "Quick Start:"
 echo "  1. Start headless background browser:  tp-start"
 echo "  2. Or start GUI browser for login:     tp-headed"
-echo "  3. Check status:                       tp-browser doctor"
+echo "  3. Print Agent Skill instructions:     tp-browser skill"
+echo "  4. Check status:                       tp-browser doctor"

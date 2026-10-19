@@ -68,6 +68,15 @@ async function main() {
     return;
   }
   if (sub === 'doctor') return doctor();
+  if (sub === 'skill') {
+    const p1 = join(dirname(dirname(fileURLToPath(import.meta.url))), 'skills', 'tp-browser', 'SKILL.md');
+    const p2 = join(DATA_DIR, 'app', 'skills', 'tp-browser', 'SKILL.md');
+    const p3 = join(DATA_DIR, 'skills', 'tp-browser', 'SKILL.md');
+    const found = [p1, p2, p3].find((p) => existsSync(p));
+    if (found) console.log(readFileSync(found, 'utf8'));
+    else console.log('See https://github.com/YourheroBOB/tp-browser/blob/main/skills/tp-browser/SKILL.md');
+    return;
+  }
   if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.0 [${osBuildTag()} — 強到沒朋友]`); return; }
   console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
@@ -75,6 +84,7 @@ usage:
   tp-browser status                 daemon + chrome health
   tp-browser spaces                 list task spaces
   tp-browser doctor                 diagnose and print fix commands
+  tp-browser skill                  print the AI Agent SKILL.md guide
   tp-browser version                print version and platform build
   (aliases: ego-browser, tp-start, tp-headed, tp-stop)`);
 }

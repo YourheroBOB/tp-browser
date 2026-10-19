@@ -1,5 +1,7 @@
 TooPower Browser (tp-browser) — 強到沒朋友
-Copyright 2026 TooPower Open Source Project (YourheroBOB)
+Copyright 2026 嚴柏顯律師（市井律師BOB-嚴律｜弘人法律事務所）& TooPower Open Source Project (YourheroBOB)
+Official YouTube Channel: https://www.youtube.com/@YourHeroBob
+Official GitHub Repository: https://github.com/YourheroBOB/tp-browser
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,20 +16,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 =========================================================================
- Attribution & Conceptual Inspiration Notice
+ Creator, Attribution & Conceptual Inspiration Notice
 =========================================================================
-This product includes original, clean-room software developed by the
-TooPower Open Source Project (https://github.com/YourheroBOB/ego-linux):
-  - TooPower Browser (`tp-browser` / `tp-browserd`) — Zero-dependency,
-    cross-platform (Windows, Linux, macOS) Agent & Human-Agent shared
-    browser engine built on Node.js 22 native WebSocket and Chrome
-    DevTools Protocol (CDP).
+1. Creator & Founder Attribution (Required under Apache-2.0 Section 4(d)):
+   TooPower Browser (`tp-browser` / `tp-browserd`) is created and open-sourced by:
+   - Founder & Lead Creator: 嚴柏顯律師 (Attorney Bob Yen / 市井律師BOB-嚴律, Managing Partner at Hiroto Law Firm 弘人法律事務所)
+   - Official YouTube Channel: 市井律師BOB-嚴律 (https://www.youtube.com/@YourHeroBob)
+   - Project Repository: https://github.com/YourheroBOB/tp-browser
 
-Conceptual Inspiration Acknowledgment:
-  TooPower Browser is conceptually inspired by the TaskSpace and batch
-  JavaScript execution paradigm pioneered by EGo Browser (https://lite.ego.app/
-  by Citro Labs). While EGo Browser focuses on a macOS desktop experience and
-  enterprise security/governance controls, TooPower Browser is an independent,
-  100% open-source implementation written from scratch to empower consumers
-  and developers across Windows, Linux, and macOS with full local cookie
-  sovereignty and zero external dependencies.
+2. Conceptual Inspiration Acknowledgment:
+   TooPower Browser is conceptually inspired by the TaskSpace and batch
+   JavaScript execution paradigm pioneered by EGo Browser (https://lite.ego.app/
+   by Citro Labs). While EGo Browser focuses on a macOS desktop experience and
+   enterprise security/governance controls, TooPower Browser is an independent,
+   100% open-source implementation written from scratch to empower consumers
+   and developers across Windows, Linux, and macOS with full local cookie
+   sovereignty and zero external dependencies.

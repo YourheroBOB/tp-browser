@@ -1,5 +1,14 @@
 $ErrorActionPreference = "Stop"
-$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptPath = if ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $PWD.Path }
+$TempClone = $null
+if ((Test-Path (Join-Path $ScriptPath "bin\tp-browser.js")) -and (Test-Path (Join-Path $ScriptPath "daemon\ego-browserd.js"))) {
+    $RepoRoot = $ScriptPath
+} else {
+    Write-Output "=== [0] Downloading TooPower Browser (tp-browser) from GitHub ==="
+    $TempClone = Join-Path ([System.IO.Path]::GetTempPath()) ("tp-browser-install-" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
+    & git clone --depth 1 https://github.com/YourheroBOB/tp-browser.git $TempClone
+    $RepoRoot = $TempClone
+}
 $DataDir = Join-Path $HOME ".local\share\ego-linux"
 $InstallDir = Join-Path $HOME "ego-linux-install"
 $LocalBin = Join-Path $HOME ".local\bin"
@@ -9,7 +18,7 @@ Write-Output "=== [1] Installing TooPower Browser (tp-browser / ego-win) to $Dat
 New-Item -ItemType Directory -Force -Path $DataDir, $InstallDir, $LocalBin, $HomeBin, (Join-Path $DataDir "profile-agent") | Out-Null
 try { & icacls $DataDir /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" | Out-Null } catch {}
 
-foreach ($d in @("bin", "daemon", "lib", "scripts", "tools", "tests")) {
+foreach ($d in @("bin", "daemon", "lib", "scripts", "tools", "tests", "skills")) {
     $src = Join-Path $RepoRoot $d
     if (Test-Path $src) {
         $dstData = Join-Path $DataDir $d
@@ -20,6 +29,17 @@ foreach ($d in @("bin", "daemon", "lib", "scripts", "tools", "tests")) {
         Copy-Item -Recurse -Force $src $dstInst
     }
 }
+
+# Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
+$SkillSrc = Join-Path $DataDir "skills\tp-browser\SKILL.md"
+if (Test-Path $SkillSrc) {
+    foreach ($sRoot in @((Join-Path $HOME ".claude\skills\tp-browser"), (Join-Path $HOME ".agents\skills\tp-browser"), (Join-Path $HOME ".codex\skills\tp-browser"))) {
+        New-Item -ItemType Directory -Force -Path $sRoot | Out-Null
+        Copy-Item -Force $SkillSrc (Join-Path $sRoot "SKILL.md")
+    }
+    Write-Output "Installed AI Agent Skill (SKILL.md) to ~/.claude/skills, ~/.agents/skills, ~/.codex/skills"
+}
+if ($TempClone -and (Test-Path $TempClone)) { Remove-Item -Recurse -Force $TempClone -ErrorAction SilentlyContinue }
 
 # Create CMD & Sh wrappers in ~/.local/bin and ~/bin
 $CmdWrapper = @'

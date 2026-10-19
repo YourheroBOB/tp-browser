@@ -130,6 +130,14 @@ writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chrome
 // ---------- SSE push channels ----------
 const sseClients = new Set();
 function broadcastPush(targetId, kind, payload) {
+  if (kind === 'coride' && payload?.mode) {
+    const found = store.findByTargetId(targetId);
+    if (found) {
+      found.space.ownership = payload.mode === 'human' ? 'user' : 'agent';
+      found.space.state = payload.mode === 'human' ? 'handed-off' : 'active';
+      store.persist();
+    }
+  }
   const line = `data: ${JSON.stringify({ type: 'push', targetId, kind, payload })}\n\n`;
   for (const res of sseClients) { try { res.write(line); } catch {} }
 }

@@ -135,8 +135,14 @@ fi
 sleep 0.3
 
 # Launch Chrome/Chromium bound strictly to 127.0.0.1
+SANDBOX_FLAG=""
+if [ "$(id -u 2>/dev/null || echo 1000)" = "0" ]; then
+  SANDBOX_FLAG="--no-sandbox"
+fi
+
 if [ "$HEADED" -eq 1 ]; then
-  spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" \
+  # shellcheck disable=SC2086
+  spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" $SANDBOX_FLAG \
     --no-first-run --no-default-browser-check \
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port="$CHROME_PORT" \
@@ -149,7 +155,8 @@ if [ "$HEADED" -eq 1 ]; then
     --noerrdialogs --disable-popup-blocking --disable-quic \
     "http://127.0.0.1:$DAEMON_PORT/newtab"
 else
-  spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new \
+  # shellcheck disable=SC2086
+  spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new $SANDBOX_FLAG \
     --no-first-run --no-default-browser-check \
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port="$CHROME_PORT" \

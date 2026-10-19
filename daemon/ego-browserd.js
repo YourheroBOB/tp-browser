@@ -66,7 +66,7 @@ async function attachChrome() {
       if (!wsUrl || !String(wsUrl).startsWith('ws://127.0.0.1:')) throw new Error('unexpected webSocketDebuggerUrl');
       const cdp = new Cdp(wsUrl, 'chrome');
       await cdp.connect();
-      hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush });
+      hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
       chromeReady = true;
       log('attached to Chromium:', wsUrl);
       cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
@@ -142,13 +142,75 @@ function broadcastPush(targetId, kind, payload) {
   for (const res of sseClients) { try { res.write(line); } catch {} }
 }
 
+const NEWTAB_HTML = `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>⚡ TooPower Browser — 新分頁控制台</title>
+<style>
+  :root { --bg:#0E0C0A; --card:#171411; --amber:#C99A4B; --green:#7C8B6F; --text:#FAF6EE; --muted:#9E9589; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:radial-gradient(circle at 50% 0%, rgba(201,154,75,0.12), transparent 60%), var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; }
+  .wrap { max-width:760px; width:100%; text-align:center; }
+  .badge { display:inline-block; padding:5px 14px; border:1px solid rgba(201,154,75,0.4); border-radius:999px; color:var(--amber); font-size:12.5px; font-family:monospace; margin-bottom:16px; }
+  h1 { font-size:38px; letter-spacing:0.5px; margin-bottom:8px; }
+  h1 span { color:var(--amber); }
+  .sub { color:var(--muted); font-size:14.5px; margin-bottom:28px; }
+  form { display:flex; gap:10px; margin-bottom:30px; }
+  input { flex:1; background:var(--card); border:1.5px solid rgba(201,154,75,0.35); color:var(--text); padding:14px 18px; border-radius:12px; font-size:15px; outline:none; }
+  input:focus { border-color:var(--amber); box-shadow:0 0 0 3px rgba(201,154,75,0.18); }
+  button { background:var(--amber); color:#12100E; font-weight:700; border:none; padding:0 22px; border-radius:12px; cursor:pointer; font-size:14.5px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr)); gap:12px; text-align:left; }
+  .card { background:var(--card); border:1px solid rgba(255,255,255,0.08); padding:14px 16px; border-radius:12px; color:var(--text); text-decoration:none; transition:border-color 0.15s, transform 0.15s; }
+  .card:hover { border-color:var(--amber); transform:translateY(-2px); }
+  .card b { display:block; font-size:14px; margin-bottom:4px; color:var(--amber); }
+  .card span { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">⚡ TooPower Browser v0.3.0 · 強到沒朋友</div>
+    <h1>TooPower <span>人機共乘新分頁</span></h1>
+    <p class="sub">上方原生書籤列已自動啟用 · 右下角常駐「🧑 我要接手操控 / 🤖 交還 Agent」共乘膠囊</p>
+    <form id="sf">
+      <input id="q" type="text" placeholder="輸入網址或 Google 搜尋關鍵字，按 Enter 前往..." autofocus />
+      <button type="submit">前往 →</button>
+    </form>
+    <div class="grid">
+      <a class="card" href="https://www.perplexity.ai/"><b>Perplexity Pro</b><span>AI 搜尋與模型委員會</span></a>
+      <a class="card" href="https://chatgpt.com/"><b>ChatGPT / Dots</b><span>OpenAI 旗艦工作區</span></a>
+      <a class="card" href="https://claude.ai/"><b>Claude</b><span>Anthropic 深度推理</span></a>
+      <a class="card" href="https://www.kimi.ai/"><b>Kimi K3</b><span>K3 極致叢集工作台</span></a>
+      <a class="card" href="https://fugu.sakana.ai/"><b>Sakana FUGU</b><span>FUGU Max / Ultra</span></a>
+      <a class="card" href="https://www.genspark.ai/"><b>Genspark</b><span>AI 超級代理工作區</span></a>
+      <a class="card" href="https://github.com/YourheroBOB/tp-browser"><b>GitHub 開源倉庫</b><span>YourheroBOB/tp-browser</span></a>
+      <a class="card" href="https://www.youtube.com/@YourHeroBob"><b>市井律師BOB-嚴律</b><span>嚴柏顯律師官方 YouTube</span></a>
+    </div>
+  </div>
+  <script>
+    document.getElementById('sf').onsubmit = function(e) {
+      e.preventDefault();
+      var v = document.getElementById('q').value.trim();
+      if (!v) return;
+      if (/^https?:\\/\\//i.test(v)) location.href = v;
+      else if (/^[a-z0-9.-]+\\.[a-z]{2,}(\\/.*)?$/i.test(v) && !v.includes(' ')) location.href = 'https://' + v;
+      else location.href = 'https://www.google.com/search?q=' + encodeURIComponent(v);
+    };
+  </script>
+</body>
+</html>`;
+
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/newtab' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
+    return;
+  }
   if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
     res.writeHead(403).end('forbidden host/origin');
     return;
   }
-  const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
   if (url.pathname === '/events') {
     if (!checkToken(req)) { res.writeHead(403).end('bad token'); return; }

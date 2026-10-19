@@ -50,6 +50,8 @@ pkill -f "tp-browserd.js" 2>/dev/null || true
 pkill -f "$PROFILE_DIR" 2>/dev/null || true
 sleep 0.6
 rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket" 2>/dev/null || true
+PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
+[ -f "$PROFILE_INIT_JS" ] && node "$PROFILE_INIT_JS" 2>/dev/null || true
 
 # Discover Chromium/Chrome/Edge/Brave on macOS (Darwin) or Linux
 OS="$(uname -s)"

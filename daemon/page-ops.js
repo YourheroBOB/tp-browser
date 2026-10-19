@@ -16,16 +16,79 @@ export class EgoError extends Error {
 const BTN = { left: 'left', right: 'right', middle: 'middle' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const CORIDE_BAR_SCRIPT = `Object.defineProperty(navigator, 'webdriver', { get: () => false });
+(function(){
+  if (window !== window.top) return;
+  function mountTpBar() {
+    if (!document.documentElement || document.getElementById('__tp_coride_host')) return;
+    const host = document.createElement('div');
+    host.id = '__tp_coride_host';
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483647;pointer-events:auto;';
+    const root = host.attachShadow({ mode: 'open' });
+    let mode = sessionStorage.getItem('__tp_coride_mode') || 'agent';
+    let min = sessionStorage.getItem('__tp_coride_min') === '1';
+    const render = () => {
+      const isHuman = mode === 'human';
+      root.innerHTML = \`<style>
+        .bar { display:flex; align-items:center; gap:10px; background:rgba(18,16,14,0.96); border:1.5px solid \${isHuman ? '#7C8B6F' : '#C99A4B'}; color:#FAF6EE; padding:\${min ? '8px 12px' : '10px 16px'}; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }
+        .brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }
+        .status { color:\${isHuman ? '#A8C296' : '#E6C786'}; font-size:12px; padding:3px 8px; border-radius:999px; background:\${isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)'}; }
+        button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 13px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:\${isHuman ? '#8FB379' : '#C99A4B'}; transition:transform 0.12s,filter 0.15s; }
+        button.act:hover { filter:brightness(1.1); transform:translateY(-1px); }
+        button.min { cursor:pointer; border:none; background:transparent; color:#9E9589; font-size:13px; padding:2px 6px; }
+        button.min:hover { color:#FAF6EE; }
+      </style>
+      <div class="bar">
+        <span class="brand" id="tp-expand" title="TooPower Browser — 強到沒朋友">⚡ TooPower</span>
+        \${min ? '' : \`
+          <span class="status" id="tp-st">\${isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命'}</span>
+          <button class="act" id="tp-btn">\${isHuman ? '🤖 完成並交還 Agent' : '🧑 我要接手操控'}</button>
+        \`}
+        <button class="min" id="tp-min" title="收合/展開">\${min ? '展開' : '—'}</button>
+      </div>\`;
+      const btn = root.getElementById('tp-btn');
+      if (btn) btn.onclick = () => {
+        mode = (mode === 'agent') ? 'human' : 'agent';
+        sessionStorage.setItem('__tp_coride_mode', mode);
+        try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ mode })); } catch {}
+        render();
+      };
+      const minBtn = root.getElementById('tp-min');
+      if (minBtn) minBtn.onclick = () => { min = !min; sessionStorage.setItem('__tp_coride_min', min ? '1' : '0'); render(); };
+      const exp = root.getElementById('tp-expand');
+      if (exp && min) exp.onclick = () => { min = false; sessionStorage.setItem('__tp_coride_min', '0'); render(); };
+    };
+    render();
+    document.documentElement.appendChild(host);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountTpBar, { once: true });
+  else mountTpBar();
+  setTimeout(mountTpBar, 600);
+})();`;
+
 export class BrowserHub {
   // One attached Chromium. sessions: targetId -> state.
-  constructor(cdp, { downloadsDir, onPush }) {
+  constructor(cdp, { downloadsDir, onPush, daemonPort }) {
     this.cdp = cdp;
     this.downloadsDir = downloadsDir;
     this.onPush = onPush; // fn(targetId, kind, payload)
+    this.daemonPort = daemonPort || 9772;
     this.sessions = new Map(); // targetId -> {sessionId, mainFrameId, frames:Set, net:Set, events:[], dialogs:[], choosers:[], title, url, modBits}
     this.downloads = new Map(); // guid -> record
     this.popupsSeen = []; // {targetId, openerId, at}
     this._wire();
+  }
+
+  _ensureCoRideBar(sessionId, url) {
+    const u = String(url || '');
+    if (u.startsWith('chrome://newtab') || u.startsWith('chrome://new-tab-page') || u.startsWith('edge://newtab')) {
+      this.cdp.send('Page.navigate', { url: `http://127.0.0.1:${this.daemonPort}/newtab` }, { sessionId }).catch(() => {});
+      return;
+    }
+    if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('file://')) {
+      this.cdp.send('Runtime.evaluate', { expression: CORIDE_BAR_SCRIPT }, { sessionId }).catch(() => {});
+    }
   }
 
   _wire() {
@@ -85,58 +148,8 @@ export class BrowserHub {
       const opts = { sessionId };
       await Promise.all(['Page.enable', 'Runtime.enable', 'DOM.enable', 'Network.enable'].map((x) => this.cdp.send(x, {}, opts).catch(() => {})));
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
-      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: `Object.defineProperty(navigator, 'webdriver', { get: () => false });
-(function(){
-  if (window !== window.top) return;
-  function mountTpBar() {
-    if (!document.documentElement || document.getElementById('__tp_coride_host')) return;
-    const host = document.createElement('div');
-    host.id = '__tp_coride_host';
-    host.setAttribute('aria-hidden', 'true');
-    host.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483647;pointer-events:auto;';
-    const root = host.attachShadow({ mode: 'open' });
-    let mode = sessionStorage.getItem('__tp_coride_mode') || 'agent';
-    let min = sessionStorage.getItem('__tp_coride_min') === '1';
-    const render = () => {
-      const isHuman = mode === 'human';
-      root.innerHTML = \`<style>
-        .bar { display:flex; align-items:center; gap:10px; background:rgba(18,16,14,0.96); border:1.5px solid \${isHuman ? '#7C8B6F' : '#C99A4B'}; color:#FAF6EE; padding:\${min ? '8px 12px' : '10px 16px'}; border-radius:999px; font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",monospace; box-shadow:0 10px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); user-select:none; }
-        .brand { color:#C99A4B; font-weight:800; letter-spacing:0.3px; display:flex; align-items:center; gap:6px; cursor:pointer; }
-        .status { color:\${isHuman ? '#A8C296' : '#E6C786'}; font-size:12px; padding:3px 8px; border-radius:999px; background:\${isHuman ? 'rgba(124,139,111,0.22)' : 'rgba(201,154,75,0.18)'}; }
-        button.act { cursor:pointer; border:none; border-radius:999px; padding:6px 13px; font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif; color:#12100E; background:\${isHuman ? '#8FB379' : '#C99A4B'}; transition:transform 0.12s,filter 0.15s; }
-        button.act:hover { filter:brightness(1.1); transform:translateY(-1px); }
-        button.min { cursor:pointer; border:none; background:transparent; color:#9E9589; font-size:13px; padding:2px 6px; }
-        button.min:hover { color:#FAF6EE; }
-      </style>
-      <div class="bar">
-        <span class="brand" id="tp-expand" title="TooPower Browser — 強到沒朋友">⚡ TooPower</span>
-        \${min ? '' : \`
-          <span class="status" id="tp-st">\${isHuman ? '🧑 人類接手模式 (Agent 暫停)' : '🤖 Agent 共乘待命'}</span>
-          <button class="act" id="tp-btn">\${isHuman ? '🤖 完成並交還 Agent' : '🧑 我要接手操控'}</button>
-        \`}
-        <button class="min" id="tp-min" title="收合/展開">\${min ? '展開' : '—'}</button>
-      </div>\`;
-      const btn = root.getElementById('tp-btn');
-      if (btn) btn.onclick = () => {
-        mode = (mode === 'agent') ? 'human' : 'agent';
-        sessionStorage.setItem('__tp_coride_mode', mode);
-        try { if (typeof window.__tpCoRideAction === 'function') window.__tpCoRideAction(JSON.stringify({ mode })); } catch {}
-        render();
-      };
-      const minBtn = root.getElementById('tp-min');
-      if (minBtn) minBtn.onclick = () => { min = !min; sessionStorage.setItem('__tp_coride_min', min ? '1' : '0'); render(); };
-      const exp = root.getElementById('tp-expand');
-      if (exp && min) exp.onclick = () => { min = false; sessionStorage.setItem('__tp_coride_min', '0'); render(); };
-    };
-    render();
-    document.documentElement.appendChild(host);
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountTpBar, { once: true });
-  else mountTpBar();
-  setTimeout(mountTpBar, 800);
-})();`,
-      }, opts).catch(() => {});
+      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
+      this._ensureCoRideBar(sessionId, st.url);
       return;
     }
     if (method === 'Target.targetCreated') {
@@ -178,10 +191,16 @@ export class BrowserHub {
           st.mainFrameId = params.frame.id;
           st.url = params.frame.url || '';
           if (params.frame.name) st.title = params.frame.name;
+          this._ensureCoRideBar(st.sessionId, st.url);
         }
+        return;
+      case 'Page.domContentEventFired':
+      case 'Page.loadEventFired':
+        this._ensureCoRideBar(st.sessionId, st.url);
         return;
       case 'Page.navigatedWithinDocument':
         st.url = params.url;
+        this._ensureCoRideBar(st.sessionId, st.url);
         return;
       case 'Page.downloadWillBegin':
         return;

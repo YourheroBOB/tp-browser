@@ -43,7 +43,7 @@ export EGO_BROWSERD_PORT="$DAEMON_PORT" EGO_CHROME_PORT="$CHROME_PORT"
 PID_FILE="$DATA_DIR/tp-pids-$DAEMON_PORT"
 # RG-A7: stop only THIS instance: PIDs recorded at launch + the pid the daemon on this port reports
 # + Chrome processes started with exactly this --user-data-dir. Never pkill by bare name/substring.
-tp_cmdline() { if [ -r "/proc/$1/cmdline" ]; then tr '\0' ' ' < "/proc/$1/cmdline"; else ps -p "$1" -o command= 2>/dev/null || true; fi; }
+tp_cmdline() { if [ -r "/proc/$1/cmdline" ]; then tr '\0' ' ' < "/proc/$1/cmdline"; else ps -ww -p "$1" -o command= 2>/dev/null || true; fi; }
 tp_kill_scoped() {
   _port="$1"; _pids=""
   [ -f "$PID_FILE" ] && _pids="$(sed -n 's/^[a-z]*=\([0-9][0-9]*\)$/\1/p' "$PID_FILE" | tr '\n' ' ')"

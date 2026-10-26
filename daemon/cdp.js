@@ -25,9 +25,9 @@ export class Cdp {
   connect(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.wsUrl);
-      const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error(`CDP connect timeout: ${this.wsUrl}`)); }, timeoutMs);
+      const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('CDP connect timeout')); }, timeoutMs);
       ws.onopen = () => { clearTimeout(timer); this.ws = ws; resolve(this); };
-      ws.onerror = () => { clearTimeout(timer); reject(new Error(`CDP connect failed: ${this.wsUrl}`)); };
+      ws.onerror = () => { clearTimeout(timer); reject(new Error('CDP connect failed')); };
       ws.onclose = () => {
         this.closed = true;
         for (const [, p] of this.pending) p.reject(new Error('CDP connection closed'));

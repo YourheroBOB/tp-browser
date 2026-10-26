@@ -376,11 +376,10 @@
     return { ok: document.activeElement === t || document.activeElement === el };
   }
 
-  function markForDom(hid) {
-    // tag element with a unique attribute so the DOM domain can find it
+  function markForDom(hid, mark) {
+    // Daemon supplies ego-<digits>; this script only sets the attribute.
     const el = elOf(hid);
-    if (!el) return null;
-    const mark = 'egoid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    if (!el || typeof mark !== 'string') return null;
     el.setAttribute('data-ego-dom', mark);
     return mark;
   }

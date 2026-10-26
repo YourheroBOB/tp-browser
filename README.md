@@ -48,7 +48,7 @@
 
 ## ⚡ 三大系統一鍵安裝與快速開始
 
-**前置需求**：Node.js `>= 22`（或 Node 20 帶 `--experimental-websocket`）與系統已安裝的 Chrome / Edge / Brave / Chromium。
+**前置需求**：Node.js `>= 22` 與系統已安裝的 Chrome / Edge / Brave / Chromium。
 
 ### 1. Windows 原生版 (`tp-win`)
 

@@ -1,7 +1,22 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+// writeFileSync/renameSync/rmSync used by persistJsonAtomic defaults.
 import { dirname } from 'node:path';
+
+export function persistJsonAtomic(file, body, fsOps = {}) {
+  const writeFile = fsOps.writeFile ?? writeFileSync;
+  const rename = fsOps.rename ?? renameSync;
+  const remove = fsOps.remove ?? rmSync;
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFile(tmp, body, { mode: 0o600 });
+  try {
+    rename(tmp, file);
+  } catch (e) {
+    console.error('[ego-browserd] store persist rename failed; keeping previous file:', e?.name || 'Error', e?.message || String(e));
+    try { remove(tmp, { force: true }); } catch {}
+  }
+}
 
 export class Store {
   constructor(file) {
@@ -16,14 +31,8 @@ export class Store {
   }
   persist() {
     mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
     const body = JSON.stringify(this.data, null, 1);
-    try {
-      writeFileSync(tmp, body);
-      renameSync(tmp, this.file);
-    } catch {
-      writeFileSync(this.file, body);
-    }
+    persistJsonAtomic(this.file, body);
   }
   list() { return Object.values(this.data.spaces); }
   get(id) { return this.data.spaces[id] ?? null; }

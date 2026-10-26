@@ -28,8 +28,6 @@ if (!prefs.profile.name || prefs.profile.name === 'Person 1' || prefs.profile.na
 }
 prefs.profile.exit_type = 'Normal';
 prefs.profile.exited_cleanly = true;
-prefs.credentials_enable_service = true;
-prefs.credentials_enable_autosignin = true;
 try {
   writeFileSync(prefsPath, JSON.stringify(prefs), 'utf8');
 } catch {}

@@ -1,7 +1,10 @@
 # Isolated Windows end-to-end run (RG-G11): throwaway USERPROFILE + private ports, real ego-start/ego-stop.
 # Never touches the user's main TP instance (9772/9773) or any other browser. Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\isolated\run-windows.ps1 [-DaemonPort 9810] [-ChromePort 9811]
-param([int]$DaemonPort = 9810, [int]$ChromePort = 9811, [int]$FixturePort = 8899)
+param([int]$DaemonPort = 9810, [int]$ChromePort = 9811, [int]$FixturePort = 0)
+# RG-B1c: -FixturePort > $env:TP_FIXTURE_PORT > 8899
+if ($FixturePort -le 0) { if ($env:TP_FIXTURE_PORT) { $FixturePort = [int]$env:TP_FIXTURE_PORT } else { $FixturePort = 8899 } }
+$SavedEnv = @{}; foreach ($k in "TP_FIXTURE_PORT", "EGO_BROWSERD_PORT", "EGO_CHROME_PORT", "TP_DRY_RUN") { $SavedEnv[$k] = [Environment]::GetEnvironmentVariable($k, "Process") }
 $env:TP_FIXTURE_PORT = "$FixturePort"
 Set-Location $env:TEMP  # cmd.exe child processes fail when the caller cwd is a UNC/WSL path
 $ErrorActionPreference = "Continue"
@@ -11,6 +14,7 @@ $IsoHome = Join-Path $T "home"
 $DataDir = Join-Path $IsoHome ".local\share\ego-linux"
 $ProfileDir = Join-Path $DataDir "profile-agent"
 $RC = 0
+function HasProfileArg($cl) { $cl = [string]$cl; return $cl.Contains("--user-data-dir=$ProfileDir`"") -or $cl.Contains("--user-data-dir=`"$ProfileDir`"") -or $cl.Contains("--user-data-dir=$ProfileDir ") -or $cl.EndsWith("--user-data-dir=$ProfileDir") }
 function Ok($n, $c, $x = "") { if ($c) { Write-Output "PASS $n $x" } else { Write-Output "FAIL $n $x"; $script:RC = 1 } }
 function PortBusy($p) { $c = New-Object Net.Sockets.TcpClient; try { $c.Connect("127.0.0.1", $p); $true } catch { $false } finally { $c.Close() } }
 foreach ($p in $DaemonPort, $ChromePort, $FixturePort) { if (PortBusy $p) { Write-Output "PORT_BUSY $p"; exit 3 } }
@@ -39,7 +43,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $o -match '(?m)^FAIL') { $RC = 1 }
   }
   # resource snapshot of this instance only
-  $mine = @(Get-CimInstance Win32_Process | Where-Object { ([string]$_.CommandLine).Contains("--user-data-dir=$ProfileDir`"") -or ([string]$_.CommandLine).Contains("--user-data-dir=$ProfileDir ") -or ($h -and $_.ProcessId -eq $h.pid) })
+  $mine = @(Get-CimInstance Win32_Process | Where-Object { (HasProfileArg $_.CommandLine) -or ($h -and $_.ProcessId -eq $h.pid) })
   $ws = 0; foreach ($p in $mine) { $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue; if ($gp) { $ws += $gp.WorkingSet64 } }
   Write-Output ("INFO G11 instance processes={0} workingSetMB={1:N0}" -f $mine.Count, ($ws / 1MB))
   $kind = (cmd /d /c "node --experimental-websocket `"$Repo\tests\isolated\cdp-cookie.mjs`" $ChromePort tp_a2_sess" 2>&1 | Out-String).Trim()
@@ -55,7 +59,7 @@ try {
   Ok "A7 isolated daemon stopped" (-not (PortBusy $DaemonPort))
   Ok "A7 isolated browser stopped" (-not (PortBusy $ChromePort))
   Ok "A7 decoy survived" ([bool](Get-Process -Id $Decoy.Id -ErrorAction SilentlyContinue))
-  $left = @(Get-CimInstance Win32_Process | Where-Object { ([string]$_.CommandLine).Contains("--user-data-dir=$ProfileDir`"") })
+  $left = @(Get-CimInstance Win32_Process | Where-Object { HasProfileArg $_.CommandLine })
   Ok "A7 no leftover browser processes for our profile" ($left.Count -eq 0) $left.Count
   $vf = @(Get-ChildItem $DataDir -Include cookies-vault.json, storage-vault.json, session-tabs.json -Recurse -ErrorAction SilentlyContinue).Count
   Ok "A2 default: no vault files written" ($vf -eq 0) $vf
@@ -64,6 +68,7 @@ try {
   Write-Output "INFO other chrome/edge processes before=$OtherBrowserBefore after=$OtherAfter"
 } finally {
   $env:USERPROFILE = $RealProfile
+  foreach ($k in $SavedEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $SavedEnv[$k], "Process") }
   foreach ($p in $Srv, $Decoy) { if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
   foreach ($p in @(Get-CimInstance Win32_Process | Where-Object { ([string]$_.CommandLine).Contains($T) })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 1

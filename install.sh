@@ -42,7 +42,7 @@ cp "$SRC/tests/"*.mjs "$APP_DIR/tests/" 2>/dev/null || true
 cp "$SRC/docs/"* "$APP_DIR/docs/" 2>/dev/null || true
 [ -f "$SRC/skills/tp-browser/SKILL.md" ] && cp "$SRC/skills/tp-browser/SKILL.md" "$APP_DIR/skills/tp-browser/SKILL.md"
 # RG-A9b: the short SKILL.md links to references/*.md; install them too.
-if [ -d "$SRC/skills/tp-browser/references" ]; then mkdir -p "$APP_DIR/skills/tp-browser/references" && cp "$SRC/skills/tp-browser/references/"*.md "$APP_DIR/skills/tp-browser/references/"; fi
+if [ -d "$SRC/skills/tp-browser/references" ]; then mkdir -p "$APP_DIR/skills/tp-browser/references" && { cp "$SRC/skills/tp-browser/references/"*.md "$APP_DIR/skills/tp-browser/references/" 2>/dev/null || true; }; fi
 [ -f "$SRC/package.json" ] && cp "$SRC/package.json" "$APP_DIR/"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$APP_DIR/"
 [ -f "$SRC/NOTICE" ] && cp "$SRC/NOTICE" "$APP_DIR/"

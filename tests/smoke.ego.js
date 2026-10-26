@@ -40,8 +40,10 @@ check('press+type', await page.evaluate(() => document.getElementById('name').va
 
 // dialog
 const clickP = page.click('#alerter');
-await new Promise((r) => setTimeout(r, 300));
-const dlg = await page.info().then((i) => i.dialog);
+// Poll instead of a fixed 300 ms sleep: a background (non-composited) tab may take ~1 s to dispatch the click.
+let dlg = null; const t0d = Date.now();
+while (!dlg && Date.now() - t0d < 5000) { await new Promise((r) => setTimeout(r, 100)); dlg = await page.info().then((i) => i.dialog); }
+console.log('dialog wait ms', Date.now() - t0d);
 check('dialog surfaced', !!dlg, dlg ? dlg.message : 'no dialog');
 check('acceptDialog', (await page.acceptDialog()) === true);
 

@@ -7,13 +7,16 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DP="${1:-9796}"; CP="${2:-9797}"; FXP="${3:-${TP_FIXTURE_PORT:-8899}}"; export TP_FIXTURE_PORT="$FXP"
 T="$(mktemp -d /tmp/tp-iso-XXXXXX)"
 CHROME="${TP_CHROME:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
+ours() { # RG-A5c: true only if PID $1 is still a process whose cmdline contains our temp dir
+  if [ -r "/proc/$1/cmdline" ]; then tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -qF "$T/"
+  else ps -ww -p "$1" -o command= 2>/dev/null | grep -qF "$T/"; fi
+}
 cleanup() {
-  for p in ${SRV:-} ${DMN:-} ${CHR:-}; do kill "$p" 2>/dev/null || true; done
-  # RG-A5b: only SIGKILL the Chrome PID if it is still OUR Chrome (cmdline has our temp profile); avoids PID reuse.
-  sleep 1; for p in ${CHR:-}; do
-    if [ -r "/proc/$p/cmdline" ] && tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qF "$T/"; then kill -9 "$p" 2>/dev/null || true
-    elif [ ! -d /proc ] && ps -p "$p" -o command= 2>/dev/null | grep -qF "$T/"; then kill -9 "$p" 2>/dev/null || true; fi
-  done
+  # SRV/DMN are our own direct children (still unreaped, so their PIDs cannot be reused); Chrome is
+  # re-verified by cmdline before every signal. Residual TOCTOU window between check and kill is ~ms.
+  for p in ${SRV:-} ${DMN:-}; do kill "$p" 2>/dev/null || true; done
+  for p in ${CHR:-}; do ours "$p" && kill "$p" 2>/dev/null || true; done
+  sleep 1; for p in ${CHR:-}; do ours "$p" && kill -9 "$p" 2>/dev/null || true; done
   rm -rf "$T"
 }
 trap cleanup EXIT INT TERM
@@ -33,7 +36,9 @@ RC=0
 for s in "$REPO"/tests/smoke.ego.js "$REPO"/tests/isolated/*.ego.js; do
   [ -f "$s" ] || continue
   echo "=== $(basename "$s")"
-  node "$REPO/bin/ego-browser.js" nodejs < "$s" || RC=1
+  # RG-A5d: a script's process.exitCode does not always reach the CLI exit status, so any FAIL line fails the run.
+  node "$REPO/bin/ego-browser.js" nodejs < "$s" > "$T/out.txt" 2>&1 || RC=1
+  cat "$T/out.txt"; grep -q '^FAIL' "$T/out.txt" && RC=1
 done
 # RG-A2: session cookie must stay a session cookie and no vault files unless TP_SESSION_VAULT=1.
 kind=$(node --experimental-websocket "$REPO/tests/isolated/cdp-cookie.mjs" "$CP" tp_a2_sess 2>/dev/null || echo error)

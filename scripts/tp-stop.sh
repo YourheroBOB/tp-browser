@@ -5,7 +5,21 @@ DATA_DIR="$HOME/.local/share/ego-linux"
 PROFILE_DIR="$DATA_DIR/profile-agent"
 # RG-A7: stop only THIS instance: PIDs recorded at launch + the pid the daemon on this port reports
 # + Chrome processes started with exactly this --user-data-dir. Never pkill by bare name/substring.
-tp_cmdline() { if [ -r "/proc/$1/cmdline" ]; then tr '\0' ' ' < "/proc/$1/cmdline"; else ps -ww -p "$1" -o command= 2>/dev/null || true; fi; }
+# Resolve symlinks ourselves: macOS readlink has no -f, and tp-stop is installed as a symlink.
+_tp_self="$0"
+_tp_n=0
+while [ -L "$_tp_self" ] && [ "$_tp_n" -lt 8 ]; do
+  _tp_n=$((_tp_n + 1))
+  _tp_base="$(cd "$(dirname "$_tp_self")" && pwd)"
+  _tp_target="$(readlink "$_tp_self" 2>/dev/null || true)"
+  [ -n "$_tp_target" ] || break
+  case "$_tp_target" in
+    /*) _tp_self="$_tp_target" ;;
+    *) _tp_self="$_tp_base/$_tp_target" ;;
+  esac
+done
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$_tp_self")" && pwd)/tp-ps.sh"
 tp_kill_scoped() {
   _port="$1"; _pids=""
   [ -f "$PID_FILE" ] && _pids="$(sed -n 's/^[a-z]*=\([0-9][0-9]*\)$/\1/p' "$PID_FILE" | tr '\n' ' ')"
@@ -13,13 +27,13 @@ tp_kill_scoped() {
   _hp=""
   # only trust the port's pid if that daemon serves OUR data dir (another user/instance may own the port)
   case "$_h" in *"\"dataDir\":\"$DATA_DIR\""*) _hp="$(printf '%s' "$_h" | sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p')" ;; esac
-  _cp="$(pgrep -f -- "--user-data-dir=$PROFILE_DIR( |$)" 2>/dev/null | tr '\n' ' ')"
+  _cp="$(tp_profile_pids)"
   _victims=""
   for _p in $_pids $_hp $_cp; do
     [ "$_p" = "$$" ] && continue
     _c="$(tp_cmdline "$_p")"
-    case "$_c" in
-      *ego-browserd.js*|*tp-browserd.js*|*"--user-data-dir=$PROFILE_DIR"*) case " $_victims " in *" $_p "*) ;; *) _victims="$_victims $_p" ;; esac ;;
+    case " $_c " in
+      *ego-browserd.js*|*tp-browserd.js*|*" --user-data-dir=$PROFILE_DIR "*) case " $_victims " in *" $_p "*) ;; *) _victims="$_victims $_p" ;; esac ;;
     esac
   done
   [ -n "${TP_DRY_RUN:-}" ] && { echo "TP_DRY_RUN would stop:$_victims"; return 0; }

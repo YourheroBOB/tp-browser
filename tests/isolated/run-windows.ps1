@@ -3,6 +3,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\isolated\run-windows.ps1 [-DaemonPort 9810] [-ChromePort 9811]
 param([int]$DaemonPort = 9810, [int]$ChromePort = 9811, [int]$FixturePort = 8899)
 $env:TP_FIXTURE_PORT = "$FixturePort"
+Set-Location $env:TEMP  # cmd.exe child processes fail when the caller cwd is a UNC/WSL path
 $ErrorActionPreference = "Continue"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $T = Join-Path $env:TEMP ("tp-iso-" + [guid]::NewGuid().ToString("N").Substring(0, 8))

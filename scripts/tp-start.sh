@@ -139,6 +139,12 @@ PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
 
 # Discover Chromium/Chrome/Edge/Brave on macOS (Darwin) or Linux
 OS="$(uname -s)"
+# macOS Chrome blocks a fresh profile on the "Chrome Safe Storage" keychain prompt.
+# --use-mock-keychain is Darwin-only; an empty MAC_FLAGS must stay unquoted so Linux gets no extra argv.
+MAC_FLAGS=""
+if [ "$OS" = "Darwin" ]; then
+  MAC_FLAGS="--use-mock-keychain"
+fi
 BROWSER_BIN="${TP_BROWSER_BIN:-}"
 if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
   if [ "$OS" = "Darwin" ]; then
@@ -147,9 +153,22 @@ if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
       "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
       "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
-      "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+      "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+      "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta" \
+      "/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev" \
+      "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary" \
+      "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta" \
+      "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev" \
+      "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary" \
+      "/opt/homebrew/bin/chromium" \
+      "/usr/local/bin/chromium"; do
       if [ -x "$c" ]; then BROWSER_BIN="$c"; break; fi
     done
+    if [ -z "${BROWSER_BIN:-}" ]; then
+      for c in chromium google-chrome google-chrome-stable chromium-browser microsoft-edge brave-browser; do
+        if command -v "$c" >/dev/null 2>&1; then BROWSER_BIN="$(command -v "$c")"; break; fi
+      done
+    fi
   else
     for c in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge brave-browser; do
       if command -v "$c" >/dev/null 2>&1; then BROWSER_BIN="$(command -v "$c")"; break; fi
@@ -197,7 +216,7 @@ fi
 
 if [ "$HEADED" -eq 1 ]; then
   # shellcheck disable=SC2086
-  CPID="$(spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" $SANDBOX_FLAG \
+  CPID="$(spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" $SANDBOX_FLAG $MAC_FLAGS \
     --no-first-run --no-default-browser-check \
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port="$CHROME_PORT" \
@@ -211,7 +230,7 @@ if [ "$HEADED" -eq 1 ]; then
     "http://127.0.0.1:$DAEMON_PORT/newtab")"
 else
   # shellcheck disable=SC2086
-  CPID="$(spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new $SANDBOX_FLAG \
+  CPID="$(spawn_detached "$LOGS_DIR/chrome.log" "$BROWSER_BIN" --headless=new $SANDBOX_FLAG $MAC_FLAGS \
     --no-first-run --no-default-browser-check \
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port="$CHROME_PORT" \

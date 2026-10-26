@@ -80,10 +80,46 @@ ln -sf "$APP_DIR/scripts/tp-start.sh" "$BIN_DIR/ego-start"
 ln -sf "$APP_DIR/scripts/tp-headed.sh" "$BIN_DIR/ego-headed"
 ln -sf "$APP_DIR/scripts/tp-stop.sh" "$BIN_DIR/ego-stop"
 
-if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-  for cmd in tp-browser tp-browserd tp-start tp-headed tp-stop ego-browser ego-browserd ego-start ego-headed ego-stop; do
-    ln -sf "$BIN_DIR/$cmd" "/usr/local/bin/$cmd" 2>/dev/null || true
+tp_cmds="tp-browser tp-browserd tp-start tp-headed tp-stop ego-browser ego-browserd ego-start ego-headed ego-stop"
+tp_link_into() {
+  _dest="$1"
+  [ -d "$_dest" ] && [ -w "$_dest" ] || return 0
+  for cmd in $tp_cmds; do
+    ln -sf "$BIN_DIR/$cmd" "$_dest/$cmd" 2>/dev/null || true
   done
+}
+tp_dir_on_path() {
+  case ":$PATH:" in
+    *":$1:"*) return 0 ;;
+  esac
+  return 1
+}
+tp_link_into /usr/local/bin
+# macOS path_helper does not search ~/.local/bin. Homebrew's bin is on PATH
+# only after `brew shellenv`. Link there when we can write it.
+if [ "$(uname -s)" = "Darwin" ]; then
+  tp_link_into /opt/homebrew/bin
+fi
+
+TP_PATH_NOTE=""
+if [ "$(uname -s)" = "Darwin" ]; then
+  _reachable=0
+  if tp_dir_on_path "$BIN_DIR"; then _reachable=1; fi
+  if tp_dir_on_path /usr/local/bin && [ -x /usr/local/bin/tp-start ]; then _reachable=1; fi
+  if tp_dir_on_path /opt/homebrew/bin && [ -x /opt/homebrew/bin/tp-start ]; then _reachable=1; fi
+  if [ "$_reachable" -eq 0 ]; then
+    MARK="# tp-browser PATH"
+    ZPROF="$HOME/.zprofile"
+    if [ -f "$ZPROF" ] && grep -qF "$MARK" "$ZPROF"; then
+      TP_PATH_NOTE="already"
+    elif [ -f "$ZPROF" ] && grep -qF "$BIN_DIR" "$ZPROF"; then
+      TP_PATH_NOTE="already"
+    elif printf '\nexport PATH="%s:$PATH" %s\n' "$BIN_DIR" "$MARK" >> "$ZPROF"; then
+      TP_PATH_NOTE="appended"
+    else
+      TP_PATH_NOTE="failed"
+    fi
+  fi
 fi
 
 # Auto-install universal AI Agent Skill (Claude Code, Antigravity, Cursor, Codex, OpenClaw)
@@ -112,3 +148,16 @@ echo "  1. Start headless background browser:  tp-start"
 echo "  2. Or start GUI browser for login:     tp-headed"
 echo "  3. Print Agent Skill instructions:     tp-browser skill"
 echo "  4. Check status:                       tp-browser doctor"
+if [ "$TP_PATH_NOTE" = "appended" ]; then
+  echo
+  echo "NOTE: macOS default PATH does not include $BIN_DIR, so TP commands would not be found."
+  echo "      Appended one line to ~/.zprofile. Open a new terminal, or run:"
+  echo "      export PATH=\"$BIN_DIR:\$PATH\""
+elif [ "$TP_PATH_NOTE" = "already" ]; then
+  echo
+  echo "NOTE: ~/.zprofile already mentions $BIN_DIR. Open a new terminal if tp-start is not found."
+elif [ "$TP_PATH_NOTE" = "failed" ]; then
+  echo
+  echo "NOTE: could not update ~/.zprofile. Add this line so TP commands are found:"
+  echo "      export PATH=\"$BIN_DIR:\$PATH\""
+fi

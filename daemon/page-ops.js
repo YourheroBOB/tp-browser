@@ -1103,6 +1103,15 @@ export class BrowserHub {
     const params = { format: 'png' };
     if (fullPage) params.captureBeyondViewport = true;
     if (clip && typeof clip === 'object') params.clip = { x: clip.x, y: clip.y, width: clip.width, height: clip.height, scale: 1 };
+    // RG-A13: headless Edge/Chrome does not present a new compositor surface for a
+    // background tab after its popup closes. Focus emulation still reports the opener
+    // as visible, so Page.captureScreenshot waits forever on CopyFromSurface.
+    // fromSurface:false and setDefaultBackgroundColorOverride do not unblock it.
+    // Activating the tab does. Headless has no HWND, so this does not steal a
+    // person's visible window. Never do it when the browser is headed.
+    if (await this._cleanUaPromise) {
+      await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId, timeout: 5000 }).catch(() => {});
+    }
     const res = await this.cdp.send('Page.captureScreenshot', params, { sessionId: st.sessionId, timeout: 60000 });
     return res.data; // base64
   }

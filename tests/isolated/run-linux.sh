@@ -4,7 +4,7 @@
 # Usage: sh tests/isolated/run-linux.sh [daemonPort] [chromePort]   (defaults 9796 9797)
 set -eu
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-DP="${1:-9796}"; CP="${2:-9797}"
+DP="${1:-9796}"; CP="${2:-9797}"; FXP="${3:-${TP_FIXTURE_PORT:-8899}}"; export TP_FIXTURE_PORT="$FXP"
 T="$(mktemp -d /tmp/tp-iso-XXXXXX)"
 CHROME="${TP_CHROME:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
 cleanup() {
@@ -13,7 +13,7 @@ cleanup() {
   rm -rf "$T"
 }
 trap cleanup EXIT INT TERM
-for port in "$DP" "$CP" 8899; do
+for port in "$DP" "$CP" "$FXP"; do
   if (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null || ss -ltn 2>/dev/null | grep -q ":$port "; then echo "PORT_BUSY $port"; exit 3; fi
 done
 node "$REPO/tests/serve.mjs" > "$T/serve.log" 2>&1 & SRV=$!

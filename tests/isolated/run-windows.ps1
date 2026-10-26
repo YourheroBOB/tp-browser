@@ -1,7 +1,8 @@
 # Isolated Windows end-to-end run (RG-G11): throwaway USERPROFILE + private ports, real ego-start/ego-stop.
 # Never touches the user's main TP instance (9772/9773) or any other browser. Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\isolated\run-windows.ps1 [-DaemonPort 9810] [-ChromePort 9811]
-param([int]$DaemonPort = 9810, [int]$ChromePort = 9811)
+param([int]$DaemonPort = 9810, [int]$ChromePort = 9811, [int]$FixturePort = 8899)
+$env:TP_FIXTURE_PORT = "$FixturePort"
 $ErrorActionPreference = "Continue"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $T = Join-Path $env:TEMP ("tp-iso-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -11,7 +12,7 @@ $ProfileDir = Join-Path $DataDir "profile-agent"
 $RC = 0
 function Ok($n, $c, $x = "") { if ($c) { Write-Output "PASS $n $x" } else { Write-Output "FAIL $n $x"; $script:RC = 1 } }
 function PortBusy($p) { $c = New-Object Net.Sockets.TcpClient; try { $c.Connect("127.0.0.1", $p); $true } catch { $false } finally { $c.Close() } }
-foreach ($p in $DaemonPort, $ChromePort, 8899) { if (PortBusy $p) { Write-Output "PORT_BUSY $p"; exit 3 } }
+foreach ($p in $DaemonPort, $ChromePort, $FixturePort) { if (PortBusy $p) { Write-Output "PORT_BUSY $p"; exit 3 } }
 $MainUpBefore = $false; try { $null = Invoke-RestMethod "http://127.0.0.1:9772/health" -TimeoutSec 2; $MainUpBefore = $true } catch {}
 $OtherBrowserBefore = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(chrome|msedge)\.exe$' }).Count
 

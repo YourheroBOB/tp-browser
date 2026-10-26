@@ -1,8 +1,9 @@
+const FX = 'http://127.0.0.1:' + ((typeof process !== 'undefined' && process.env.TP_FIXTURE_PORT) || 8899) + '/';
 // RG-A5: snapshot must not leak password / card / OTP / hidden input values.
 const ok = (n, c, x = '') => { console.log(`${c ? 'PASS' : 'FAIL'} A5 ${n}${x ? ' — ' + x : ''}`); if (!c) process.exitCode = 1; };
 const t = await taskSpace('rg-a5');
 const p = t.page('p1');
-await p.goto('http://127.0.0.1:8899/', { waitUntil: 'load' });
+await p.goto(FX, { waitUntil: 'load' });
 await p.evaluate(() => {
   const f = document.createElement('form');
   f.innerHTML = '<input id="u" type="text" value="visible-user">' +

@@ -1,6 +1,7 @@
+const FX = 'http://127.0.0.1:' + ((typeof process !== 'undefined' && process.env.TP_FIXTURE_PORT) || 8899) + '/';
 // Smoke script — run with:  ego-browser nodejs -e "$(cat tests/smoke.ego.js)"
 // Exercises the ego-browser compatible surface end to end.
-const BASE = 'http://127.0.0.1:8899/';
+const BASE = FX;
 const results = [];
 const check = (name, cond, extra = '') => {
   results.push({ name, pass: !!cond, extra });

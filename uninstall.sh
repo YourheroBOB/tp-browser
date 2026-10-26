@@ -226,7 +226,9 @@ if [ -f "$ZPROF" ] && grep -qF '# tp-browser PATH' "$ZPROF"; then
   elif _z="$(mktemp "$ZPROF.tp.XXXXXX" 2>/dev/null)" && [ -n "$_z" ]; then
     trap 'rm -f "$_z"; cleanup' EXIT
     trap 'rm -f "$_z"; cleanup; exit 130' INT TERM
-    _grc=0; _ro=0; [ -w "$ZPROF" ] || _ro=1
+    _grc=0; _ro=0
+    # RG-A12g5: read the owner write bit itself (ls -l column 3), not -w, which is always true for root.
+    [ "$(ls -ld "$ZPROF" | cut -c3)" = "w" ] || _ro=1
     { cp -p "$ZPROF" "$_z" && chmod u+w "$_z" && { grep -vF '# tp-browser PATH' "$ZPROF" > "$_z" || _grc=$?; }; } || _grc=2
     # RG-A12g4: give a read-only original its read-only mode back.
     if [ "$_grc" -le 1 ] && [ "$_ro" -eq 1 ]; then chmod u-w "$_z" || _grc=2; fi

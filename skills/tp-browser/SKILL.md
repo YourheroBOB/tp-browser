@@ -13,22 +13,22 @@ description: >-
 ## 啟動
 
 ```bash
-node bin/ego-browser.js nodejs < script.js
+tp-browser nodejs < script.js   # 同 ego-browser；任何 cwd 皆可
 ```
 
 未啟動會自起無頭。要可見視窗自行跑 `tp-headed`（已開著則保留分頁）。勿叫人手動開 Chrome。
 
 ## 呼叫
 
-- `taskSpace(name)`：取得或建立隔離工作區（預設分頁 `p1`）。
-- `page(label)`：取該工作區的分頁。
-- `snapshot()`：緊湊快照，互動元素為 `@N`。
-- `click(sel)`：點 CSS、`@N`、`text=`、`loc=` 或 xpath。
-- `fill(sel, value)`：清空並填入。
-- `handOff()`：交給人；其後頁面操作丟 `HandedOffError`，代理停手。
-- `waitForControl()`：真的等到人交還（預設最長 30 分鐘）。
-- `takeOver()`：代理取回操控。
-- `finish({ keep })`：結束工作區並關閉未保留的分頁。
+- `const t = await taskSpace(name)`：取得或建立隔離工作區。
+- `const p = t.page('p1')`：取該工作區的分頁。
+- `await p.snapshot()`：緊湊快照，互動元素為 `@N`。
+- `await p.click(sel)`：點 CSS、`@N`、`text=`、`loc=` 或 xpath。
+- `await p.fill(sel, value)`：清空並填入。
+- `await t.handOff()`：交給人；其後頁面操作與 raw cdp 丟 `HandedOffError`。
+- `await t.waitForControl()`：真的等到人交還（預設最長 30 分鐘）。
+- `await t.takeOver()`：代理取回操控。
+- `await t.finish({ keep })`：結束工作區並關閉未保留的分頁。
 
 ## 安全
 

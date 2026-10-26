@@ -94,8 +94,14 @@ const addRoot = (baseDir) => {
 if (process.platform === 'darwin') {
   const appSup = join(home, 'Library', 'Application Support');
   addRoot(join(appSup, 'Google', 'Chrome'));
+  addRoot(join(appSup, 'Google', 'Chrome Beta'));
+  addRoot(join(appSup, 'Google', 'Chrome Dev'));
+  addRoot(join(appSup, 'Google', 'Chrome Canary'));
   addRoot(join(appSup, 'Citro Labs', 'ego lite'));
   addRoot(join(appSup, 'Microsoft Edge'));
+  addRoot(join(appSup, 'Microsoft Edge Beta'));
+  addRoot(join(appSup, 'Microsoft Edge Dev'));
+  addRoot(join(appSup, 'Microsoft Edge Canary'));
   addRoot(join(appSup, 'BraveSoftware', 'Brave-Browser'));
   addRoot(join(appSup, 'Comet'));
   addRoot(join(appSup, 'Chromium'));
@@ -172,7 +178,10 @@ if (bestCandidate) {
     const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
       ? join(bestCandidate.profDir, 'Network', 'Cookies')
       : join(bestCandidate.profDir, 'Cookies');
-    const dstCookiesDir = process.platform === 'win32' ? join(profileDef, 'Network') : profileDef;
+    // Chrome 96+ reads Default/Network/Cookies on macOS, Linux, and Windows.
+    // Writing the legacy Default/Cookies file (the old non-Windows path) is ignored,
+    // so an opt-in import on macOS never showed up in the agent profile.
+    const dstCookiesDir = join(profileDef, 'Network');
     const dstCookies = join(dstCookiesDir, 'Cookies');
     if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
       try {

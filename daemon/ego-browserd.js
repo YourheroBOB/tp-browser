@@ -455,7 +455,7 @@ async function dispatch(method, p) {
       const t = await h.cdp.send('Target.createTarget', { url: 'about:blank', background: true });
       const label = p.as || store.nextLabel(sp.id);
       store.addPage(sp.id, label, t.targetId, 'agent');
-      await waitSession(t.targetId);
+      await enableBackgroundInput(t.targetId);
       return { label, targetId: t.targetId };
     }
     case 'page.adopt': {
@@ -523,7 +523,7 @@ async function syncSpaceTargets(spaceId) {
     const t = await h.cdp.send('Target.createTarget', { url: 'about:blank', background: true });
     bound.add(t.targetId);
     store.bindPage(spaceId, label, t.targetId, pg.openedBy);
-    await waitSession(t.targetId);
+    await enableBackgroundInput(t.targetId);
   }
 }
 
@@ -533,6 +533,16 @@ async function waitSession(targetId, tries = 50) {
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new EgoError('PageOpenError', `target ${targetId} did not attach`);
+}
+
+// background:true keeps the tab from stealing focus, but Chrome does not
+// composite a hidden tab. mouseMoved then waits on a frame, so an alert is
+// not up for a short poll and the next click interleaves the gesture (no
+// dialog event, no window.open). Focus emulation produces frames without
+// activating the tab.
+async function enableBackgroundInput(targetId) {
+  const st = await waitSession(targetId);
+  await hub.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, { sessionId: st.sessionId }).catch(() => {});
 }
 
 function spaceView(spaceId) {

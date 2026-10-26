@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSyn
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { Cdp } from './cdp.js';
 import { Store } from './store.js';
 import { BrowserHub, EgoError } from './page-ops.js';
@@ -74,6 +75,7 @@ function log(...a) { console.log('[tp-browserd]', ...a); }
 
 // Identify which Chromium we attached to (so launchers can verify "my daemon + my Chrome").
 // Linux: resolve the process listening on the CDP port via /proc/net/tcp* -> socket inode -> /proc/<pid>/fd.
+// macOS has no /proc. BSD ps clips argv to $COLUMNS unless -ww, which hides --user-data-dir.
 // Runs once per attach; failures just leave pid/userDataDir null.
 function findListenerPid(port) {
   try {
@@ -99,6 +101,29 @@ function findListenerPid(port) {
   } catch {}
   return null;
 }
+// Exact argv tokens. ps prints one line with spaces, so a value that itself contains
+// spaces cannot be recovered; TP's profile path does not contain spaces.
+function darwinChromeOnPort(port) {
+  try {
+    const r = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 3000 });
+    if (!r.stdout) return null;
+    const portToken = `--remote-debugging-port=${port}`;
+    const dirToken = '--user-data-dir=';
+    for (const line of r.stdout.split('\n')) {
+      const trimmed = line.trim();
+      const sp = trimmed.indexOf(' ');
+      if (sp < 1) continue;
+      const pid = Number(trimmed.slice(0, sp));
+      if (!Number.isInteger(pid)) continue;
+      const parts = trimmed.slice(sp + 1).split(' ').filter(Boolean);
+      if (!parts.includes(portToken)) continue;
+      if (parts.some((p) => p.startsWith('--type='))) continue;
+      const dirArg = parts.find((p) => p.startsWith(dirToken));
+      return { pid, userDataDir: dirArg ? dirArg.slice(dirToken.length) : null };
+    }
+  } catch {}
+  return null;
+}
 function describeChrome(info, wsUrl) {
   const id = { cdpPort: CHROME_DEBUG_PORT, wsPort: null, browserId: null, product: info?.Browser || null, pid: null, userDataDir: null };
   try { const u = new URL(wsUrl); id.wsPort = Number(u.port); id.browserId = u.pathname.split('/').pop() || null; } catch {}
@@ -111,6 +136,9 @@ function describeChrome(info, wsUrl) {
         if (a) id.userDataDir = a.slice('--user-data-dir='.length);
       } catch {}
     }
+  } else if (process.platform === 'darwin') {
+    const hit = darwinChromeOnPort(CHROME_DEBUG_PORT);
+    if (hit) { id.pid = hit.pid; id.userDataDir = hit.userDataDir; }
   }
   return id;
 }

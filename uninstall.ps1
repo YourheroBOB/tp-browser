@@ -171,7 +171,12 @@ function Send-TpEnvBroadcast {
 }
 # RG-A10b: only remove PATH entries install.ps1 recorded in path-added.txt, only when that bin dir will hold
 # nothing but TP wrappers, and keep the raw REG_EXPAND_SZ value so other entries stay unexpanded.
-$Marker = Join-Path $DataDir "path-added.txt"
+# >>> TP_PATH_BLOCK (tests/isolated/a10-win-path.ps1 runs this block against a throwaway HKCU\Software\TP-test-* key)
+# RG-A10e: only the v2 marker is trusted; a pre-v2 path-added.txt may list entries the user already had.
+$Marker = Join-Path $DataDir "path-added.v2.txt"
+$LegacyMarker = Join-Path $DataDir "path-added.txt"
+$EnvSubKey = "Environment"
+if ($env:TP_TEST_ENV_SUBKEY -and ($env:TP_TEST_ENV_SUBKEY -match '^Software\\TP-test-[A-Za-z0-9-]+\\Environment$')) { $EnvSubKey = $env:TP_TEST_ENV_SUBKEY }
 $OursAdded = @()
 if (Test-Path -LiteralPath $Marker) { $OursAdded = @(Get-Content -LiteralPath $Marker | Where-Object { $_ -ne "" } | ForEach-Object { $_.TrimEnd('\') }) }
 function Test-BinEmptyAfterPlan([string]$dir) {
@@ -182,7 +187,7 @@ function Test-BinEmptyAfterPlan([string]$dir) {
     return $true
 }
 $EnvKey = $null
-try { $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) } catch { $EnvKey = $null }
+try { $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($EnvSubKey, $true) } catch { $EnvKey = $null }
 # RG-A10d: no marker (older install, manual or portable copy) means no proof TP added the entry: keep it and say so.
 $PathKept = @()
 if (-not (Test-Path -LiteralPath $Marker)) {
@@ -206,6 +211,8 @@ if ($EnvKey -and $OursAdded.Count -gt 0) {
 }
 if ($EnvKey) { $EnvKey.Close() }
 if ($PathNotes.Count -gt 0 -and (Test-Path -LiteralPath $Marker)) { Add-Plan $Marker }
+if (Test-Path -LiteralPath $LegacyMarker) { Add-Plan $LegacyMarker }
+# <<< TP_PATH_BLOCK
 
 if ($DryRun) {
     foreach ($p in $Plan) { Write-Output "would remove: $p" }
@@ -230,6 +237,6 @@ if ($PathNotes.Count -gt 0) {
     Write-Output ("Removed User PATH entries: " + ($PathNotes -join "; "))
 }
 if ($PathKept.Count -gt 0) {
-    Write-Output ("No path-added.txt record, so User PATH was left as is. If TP added them, remove by hand: " + ($PathKept -join "; "))
+    Write-Output ("No path-added.v2.txt record, so User PATH was left as is. If TP added them, remove by hand: " + ($PathKept -join "; "))
 }
 exit 0

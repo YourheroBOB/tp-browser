@@ -119,7 +119,10 @@ function Send-TpEnvBroadcast {
         [void][TpNs.EnvNotify]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$r)
     } catch { }
 }
-$EnvKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+# >>> TP_PATH_BLOCK (tests/isolated/a10-win-path.ps1 runs this block against a throwaway HKCU\Software\TP-test-* key)
+$EnvSubKey = "Environment"
+if ($env:TP_TEST_ENV_SUBKEY -and ($env:TP_TEST_ENV_SUBKEY -match '^Software\\TP-test-[A-Za-z0-9-]+\\Environment$')) { $EnvSubKey = $env:TP_TEST_ENV_SUBKEY }
+$EnvKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($EnvSubKey)
 $UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 $PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
 try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
@@ -142,12 +145,14 @@ if ($Added.Count -gt 0) {
 # RG-A10d: record only the entries this installer actually appended; entries that were already on PATH
 # (raw or via %VAR%) belong to the user and uninstall never removes them.
 if ($Added.Count -gt 0) {
-    $Marker = Join-Path $DataDir "path-added.txt"
+    # RG-A10e: v2 marker. Pre-v2 path-added.txt may list entries the user already had, so it is never merged.
+    $Marker = Join-Path $DataDir "path-added.v2.txt"
     $prevAdded = @()
-    if (Test-Path -LiteralPath $Marker) { $prevAdded = @(Get-Content -LiteralPath $Marker) }
+    if (Test-Path -LiteralPath $Marker) { $prevAdded = @(Get-Content -LiteralPath $Marker | Where-Object { $_ -ne "" }) }
     Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Added) | Select-Object -Unique) -Encoding UTF8
 }
 $EnvKey.Close()
+# <<< TP_PATH_BLOCK
 
 # Install Startup VBS launcher so TP Browser auto-starts hidden on Windows logon
 $StartupDir = [Environment]::GetFolderPath("Startup")

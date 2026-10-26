@@ -14,7 +14,7 @@ Zero-dependency Human-Agent Shared Browser for Windows, TP Linux, and macOS. Whe
 
 1. **NEVER ask the human user to manually launch Chrome, `tp-headed`, or `ego-headed`!** You have direct shell commands to pop up the visible GUI browser window on any desktop yourself (even over Windows OpenSSH Session 0, which `tp-headed` automatically bridges to the interactive desktop Session 1).
 2. **`tp-browser` and `ego-browser` are 100% interchangeable aliases** across macOS, Windows (`rog`, `pc`), and Linux (`abacus`, WSL2):
-   - Need **background headless** browsing? Just run `tp-browser nodejs << 'EOF' ...` (it **auto-starts** headless mode if not running!) or explicitly run `tp-start` (`ego-start` / `tp-browser start`). From a repo checkout without installing, the same entry is `node <repo>/bin/ego-browser.js nodejs < script.js`.
+   - Need **background headless** browsing? Just run `tp-browser nodejs << 'EOF' ...` (it **auto-starts** headless mode if not running!) or explicitly run `tp-start` (`ego-start` / `tp-browser start`). From a repo checkout without installing, the same entry is `node /path/to/tp-browser/bin/ego-browser.js nodejs < script.js` (bash/zsh). `<` stdin redirection is not valid in Windows PowerShell 5.1; there use `$OutputEncoding = [Text.UTF8Encoding]::new($false); Get-Content -Raw -Encoding UTF8 script.js | tp-browser nodejs` (or `cmd /c "tp-browser nodejs < script.js"`).
    - Need a **human-visible GUI Chrome window** on the screen (so the user can log in, pass 2FA/Captcha, or watch)? Run **`tp-headed`** (or `ego-headed` / `tp-browser headed` / `ego-browser headed`) yourself!
    - If the GUI browser window is **already open** on the user's desktop, calling `tp-headed` is a safe no-op that preserves all open tabs.
 

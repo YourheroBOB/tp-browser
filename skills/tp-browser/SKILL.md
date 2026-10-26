@@ -16,6 +16,8 @@ description: >-
 tp-browser nodejs < script.js   # 同 ego-browser；任何 cwd 皆可
 ```
 
+PowerShell 5.1 不支援 `<`，寫法見 platforms.md。
+
 未啟動會自起無頭。要可見視窗自行跑 `tp-headed`（已開著則保留分頁）。勿叫人手動開 Chrome。
 
 ## 呼叫

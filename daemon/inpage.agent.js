@@ -68,6 +68,16 @@
     return r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
   }
 
+  // RG-A5: never surface secrets (passwords, card numbers/CVC, OTPs, hidden inputs) in snapshots.
+  const SENSITIVE_AC = /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp(-month|-year)?)(\s|$)/i;
+  function isSensitiveInput(el) {
+    if (!el || el.tagName !== 'INPUT') return false;
+    const type = String(el.type || '').toLowerCase();
+    if (type === 'password' || type === 'hidden') return true;
+    const ac = String((el.getAttribute && el.getAttribute('autocomplete')) || '');
+    return SENSITIVE_AC.test(ac);
+  }
+
   function accessName(el) {
     const al = el.getAttribute && el.getAttribute('aria-label');
     if (al) return norm(al);
@@ -83,7 +93,7 @@
     }
     const t = norm(el.textContent);
     if (t) return t;
-    if ('value' in el && el.value) return String(el.value);
+    if ('value' in el && el.value && !isSensitiveInput(el)) return String(el.value);
     if (el.placeholder) return el.placeholder;
     if (el.title) return el.title;
     if (el.alt) return el.alt;
@@ -293,7 +303,7 @@
         const ref = refOf(el);
         const parts = ['ref=' + ref];
         if (role === 'anchor' && el.href) { parts.push('loc=href:' + el.href); parts.push('url=' + el.href); }
-        if (tag === 'INPUT' && el.value) parts.push('value=' + JSON.stringify(trunc(String(el.value), 60)));
+        if (tag === 'INPUT' && el.value) parts.push(isSensitiveInput(el) ? 'value=[redacted]' : 'value=' + JSON.stringify(trunc(String(el.value), 60)));
         line += ' [' + parts.join(', ') + ']';
       }
       lines.push(line);

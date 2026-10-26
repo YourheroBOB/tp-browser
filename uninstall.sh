@@ -143,6 +143,10 @@ for cmd in $CMDS; do
   if [ -d /usr/local/bin ]; then
     add_our_symlink "/usr/local/bin/$cmd"
   fi
+  # RG-A12g: install.sh also links into Homebrew's bin on macOS.
+  if [ -d /opt/homebrew/bin ]; then
+    add_our_symlink "/opt/homebrew/bin/$cmd"
+  fi
 done
 
 for root in \
@@ -201,6 +205,7 @@ if [ "$DRY" -eq 1 ]; then
   else
     printf '%s\n' "would remove: (nothing)"
   fi
+  if [ -f "$HOME/.zprofile" ] && grep -qF '# tp-browser PATH' "$HOME/.zprofile"; then printf '%s\n' "would remove: the '# tp-browser PATH' line in ~/.zprofile"; fi
   printf '%s\n' "dry-run: no files removed"
   exit 0
 fi
@@ -210,6 +215,13 @@ while IFS= read -r p; do
     rm -rf "$p"
   fi
 done < "$PLAN"
+
+# RG-A12g: drop only the one marked line install.sh appended to ~/.zprofile on macOS.
+ZPROF="$HOME/.zprofile"
+if [ -f "$ZPROF" ] && grep -qF '# tp-browser PATH' "$ZPROF"; then
+  _z="$(mktemp "${TMPDIR:-/tmp}/tp-zprofile.XXXXXX")" && grep -vF '# tp-browser PATH' "$ZPROF" > "$_z"; cat "$_z" > "$ZPROF" && rm -f "$_z"
+  printf '%s\n' "Removed the tp-browser PATH line from ~/.zprofile"
+fi
 
 printf '%s\n' "TP Linux uninstall finished"
 if [ "$PURGE" -eq 1 ]; then

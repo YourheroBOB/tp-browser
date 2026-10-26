@@ -159,6 +159,16 @@ if (Test-Path -LiteralPath $Stop) {
 }
 
 $PathNotes = @()
+function Send-TpEnvBroadcast {
+    # RG-A10c: tell Explorer and new processes that User PATH changed (SetEnvironmentVariable did this implicitly).
+    try {
+        if (-not ("TpNs.EnvNotify" -as [type])) {
+            Add-Type -Namespace "TpNs" -Name "EnvNotify" -MemberDefinition '[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);' -ErrorAction Stop
+        }
+        $r = [UIntPtr]::Zero
+        [void][TpNs.EnvNotify]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$r)
+    } catch { }
+}
 # RG-A10b: only remove PATH entries install.ps1 recorded in path-added.txt, only when that bin dir will hold
 # nothing but TP wrappers, and keep the raw REG_EXPAND_SZ value so other entries stay unexpanded.
 $Marker = Join-Path $DataDir "path-added.txt"
@@ -173,18 +183,22 @@ function Test-BinEmptyAfterPlan([string]$dir) {
 }
 $EnvKey = $null
 try { $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) } catch { $EnvKey = $null }
+# Legacy installs (before path-added.txt) have no marker: fall back to the two TP bins, still guarded by the empty-dir check.
+$Legacy = -not (Test-Path -LiteralPath $Marker)
+if ($Legacy) { $OursAdded = @($LocalBin.TrimEnd('\'), $HomeBin.TrimEnd('\')) }
 if ($EnvKey -and $OursAdded.Count -gt 0) {
     $UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
     try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
     $keep = @()
     foreach ($part in ($UserPath -split ";" | Where-Object { $_ -ne "" })) {
-        $trim = $part.TrimEnd('\')
+        $trim = [Environment]::ExpandEnvironmentVariables($part).TrimEnd('\')
         $isOurs = ($OursAdded -icontains $trim) -and (($trim -ieq $LocalBin.TrimEnd('\')) -or ($trim -ieq $HomeBin.TrimEnd('\'))) -and (Test-BinEmptyAfterPlan $trim)
         if ($isOurs) { $PathNotes += $part } else { $keep += $part }
     }
     if ($PathNotes.Count -gt 0 -and -not $DryRun) {
         $EnvKey.SetValue("Path", ($keep -join ";"), $PathKind)
+        Send-TpEnvBroadcast
     }
 }
 if ($EnvKey) { $EnvKey.Close() }

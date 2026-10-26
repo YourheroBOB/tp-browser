@@ -109,25 +109,43 @@ foreach ($dir in @($LocalBin, $HomeBin)) {
 # Ensure ~/.local/bin and ~/bin are in User PATH.
 # RG-A10b: read/write the raw registry value so REG_EXPAND_SZ entries such as %JAVA_HOME%\bin stay unexpanded,
 # and record exactly which entries TP added so uninstall.ps1 removes only those.
+function Send-TpEnvBroadcast {
+    # RG-A10c: tell Explorer and new processes that User PATH changed (SetEnvironmentVariable did this implicitly).
+    try {
+        if (-not ("TpNs.EnvNotify" -as [type])) {
+            Add-Type -Namespace "TpNs" -Name "EnvNotify" -MemberDefinition '[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);' -ErrorAction Stop
+        }
+        $r = [UIntPtr]::Zero
+        [void][TpNs.EnvNotify]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$r)
+    } catch { }
+}
 $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
 $UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 $PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
 try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
 $PathParts = @($UserPath -split ";" | Where-Object { $_ -ne "" })
 $Added = @()
+$Managed = @()
 foreach ($b in @($LocalBin, $HomeBin)) {
-    if (-not ($PathParts | Where-Object { $_.TrimEnd('\') -ieq $b.TrimEnd('\') })) {
+    $present = $PathParts | Where-Object { ($_.TrimEnd('\') -ieq $b.TrimEnd('\')) -or ([Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $b.TrimEnd('\')) }
+    if (-not $present) {
         $PathParts += $b
         $Added += $b
     }
+    $Managed += $b
 }
 if ($Added.Count -gt 0) {
     $EnvKey.SetValue("Path", ($PathParts -join ";"), $PathKind)
     $env:Path = "$LocalBin;$HomeBin;$env:Path"
+    Send-TpEnvBroadcast
+}
+# Record the bins TP manages (newly added or already present) so uninstall can clean them up; uninstall still
+# keeps an entry whose directory would hold anything but TP wrappers.
+if ($Managed.Count -gt 0) {
     $Marker = Join-Path $DataDir "path-added.txt"
     $prevAdded = @()
     if (Test-Path -LiteralPath $Marker) { $prevAdded = @(Get-Content -LiteralPath $Marker) }
-    Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Added) | Select-Object -Unique) -Encoding UTF8
+    Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Managed) | Select-Object -Unique) -Encoding UTF8
 }
 $EnvKey.Close()
 

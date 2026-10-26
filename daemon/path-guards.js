@@ -7,17 +7,24 @@ import {
   constants as fsConstants,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   realpathSync,
   writeSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+
+const COPY_CHUNK = 64 * 1024;
 
 export class PathGuardError extends Error {
   constructor(message, name = 'BadPath') {
     super(message);
     this.name = name;
   }
+}
+
+export function hasDotDotSegment(p) {
+  return String(p || '').replace(/\\/g, '/').split('/').some((part) => part === '..');
 }
 
 export function validateLoopbackDebuggerWsUrl(wsUrl, expectedPort) {
@@ -45,9 +52,12 @@ export function safeDownloadEntryName(name) {
   if (path.posix.isAbsolute(name) || path.win32.isAbsolute(name)) {
     throw new Error('invalid download name');
   }
-  if (name.includes('..')) throw new Error('invalid download name');
-  const base = path.basename(String(name).replace(/\\/g, '/'));
-  if (!base || base === '.' || base === '..' || base.includes('..')) {
+  const unified = String(name).replace(/\\/g, '/');
+  if (hasDotDotSegment(unified) || unified.includes('/')) {
+    throw new Error('invalid download name');
+  }
+  const base = path.basename(unified);
+  if (!base || base === '.' || base === '..') {
     throw new Error('invalid download name');
   }
   if (/[\\/]/.test(base)) throw new Error('invalid download name');
@@ -69,7 +79,7 @@ export function assertSafePath(p) {
   if (typeof p !== 'string' || p.length === 0 || p.includes('\0')) {
     throw new PathGuardError('invalid path');
   }
-  if (p.includes('..')) throw new PathGuardError(`path traversal rejected: ${p}`);
+  if (hasDotDotSegment(p)) throw new PathGuardError(`path traversal rejected: ${p}`);
   if (!path.isAbsolute(p)) throw new PathGuardError(`absolute path required, got: ${p}`);
   const norm = path.resolve(p);
   const parts = norm.split(path.sep);
@@ -111,45 +121,94 @@ export function safePath(p, { mustExist = false } = {}) {
   return norm;
 }
 
-export function writeFileNoFollow(filePath, data, { mode = 0o600 } = {}) {
-  const target = safePath(filePath);
-  try {
-    const st = lstatSync(target);
-    if (st.isSymbolicLink()) {
-      throw new PathGuardError('refusing to write through leaf symlink');
-    }
-  } catch (e) {
-    if (e && e.name === 'BadPath') throw e;
-    if (e?.code !== 'ENOENT') throw e;
+function writeAllSync(fd, data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  let off = 0;
+  while (off < buf.length) {
+    const n = writeSync(fd, buf, off, buf.length - off);
+    if (!n) throw new Error('short write');
+    off += n;
   }
+}
+
+function openDestNoFollow(target, mode) {
   let flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC;
   if (typeof fsConstants.O_NOFOLLOW === 'number') flags |= fsConstants.O_NOFOLLOW;
-  let fd;
   try {
-    fd = openSync(target, flags, mode);
+    return openSync(target, flags, mode);
   } catch (e) {
     if (e?.code === 'ELOOP' || e?.code === 'EMLINK') {
       throw new PathGuardError('refusing to write through leaf symlink');
     }
     throw e;
   }
+}
+
+function destExistedNotSymlink(target) {
   try {
-    writeSync(fd, data);
+    const st = lstatSync(target);
+    if (st.isSymbolicLink()) {
+      throw new PathGuardError('refusing to write through leaf symlink');
+    }
+    return true;
+  } catch (e) {
+    if (e && e.name === 'BadPath') throw e;
+    if (e?.code !== 'ENOENT') throw e;
+    return false;
+  }
+}
+
+export function writeFileNoFollow(filePath, data, { mode = 0o600 } = {}) {
+  const target = safePath(filePath);
+  const existed = destExistedNotSymlink(target);
+  const fd = openDestNoFollow(target, mode);
+  try {
+    writeAllSync(fd, data);
   } finally {
     closeSync(fd);
   }
-  try { chmodSync(target, mode); } catch {}
+  if (!existed) {
+    try { chmodSync(target, mode); } catch {}
+  }
   return target;
 }
 
 export function copyFileNoFollow(src, dest, { mode = 0o600 } = {}) {
-  return writeFileNoFollow(dest, readFileSync(src), { mode });
+  const target = safePath(dest);
+  const existed = destExistedNotSymlink(target);
+  let srcFd;
+  try {
+    srcFd = openSync(src, fsConstants.O_RDONLY);
+  } catch (e) {
+    throw e;
+  }
+  let destFd;
+  try {
+    destFd = openDestNoFollow(target, mode);
+  } catch (e) {
+    try { closeSync(srcFd); } catch {}
+    throw e;
+  }
+  try {
+    const buf = Buffer.alloc(COPY_CHUNK);
+    let n;
+    while ((n = readSync(srcFd, buf, 0, buf.length, null)) > 0) {
+      writeAllSync(destFd, buf.subarray(0, n));
+    }
+  } finally {
+    try { closeSync(srcFd); } catch {}
+    try { closeSync(destFd); } catch {}
+  }
+  if (!existed) {
+    try { chmodSync(target, mode); } catch {}
+  }
+  return target;
 }
 
-export const DOM_MARK_RE = /^ego-\d+$/;
+export const DOM_MARK_RE = /^ego-[0-9a-f]{32}$/;
 
-export function nextDomMark(seq) {
-  return `ego-${seq}`;
+export function nextDomMark() {
+  return `ego-${randomBytes(16).toString('hex')}`;
 }
 
 export function acceptDomMark(returned, expected) {

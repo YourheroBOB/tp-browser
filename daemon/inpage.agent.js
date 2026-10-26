@@ -377,7 +377,7 @@
   }
 
   function markForDom(hid, mark) {
-    // Daemon supplies ego-<digits>; this script only sets the attribute.
+    // Daemon supplies a random ego-<hex> nonce; this script only sets the attribute.
     const el = elOf(hid);
     if (!el || typeof mark !== 'string') return null;
     el.setAttribute('data-ego-dom', mark);

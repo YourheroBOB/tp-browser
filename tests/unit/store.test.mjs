@@ -30,25 +30,34 @@ test('persistJsonAtomic writes with 0600 mode', () => {
   }
 });
 
-test('persistJsonAtomic keeps previous file when rename fails', () => {
+test('persistJsonAtomic falls back to direct write when rename fails', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tp-store-'));
+  try {
+    const f = join(d, 'spaces.json');
+    writeFileSync(f, '{"old":1}', { mode: 0o600 });
+    const result = persistJsonAtomic(f, '{"new":2}', {
+      rename: () => { throw new Error('rename failed in test'); },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.fallback, true);
+    assert.equal(readFileSync(f, 'utf8'), '{"new":2}');
+    assert.equal(existsSync(`${f}.${process.pid}.tmp`), false);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('persistJsonAtomic throws when rename and fallback write both fail', () => {
   const d = mkdtempSync(join(tmpdir(), 'tp-store-'));
   try {
     const f = join(d, 'spaces.json');
     const oldBody = '{"old":1}';
     writeFileSync(f, oldBody, { mode: 0o600 });
-    const before = statSync(f).mtimeMs;
-    let removeCalled = false;
-    persistJsonAtomic(f, '{"new":2}', {
-      rename: () => { throw new Error('rename failed in test'); },
-      remove: (p, opts) => {
-        removeCalled = true;
-        rmSync(p, opts);
+    assert.throws(() => persistJsonAtomic(f, '{"new":2}', {
+      writeFile: (p, body, opts) => {
+        if (p === f) throw new Error('direct write failed');
+        writeFileSync(p, body, opts);
       },
-    });
-    const tmp = `${f}.${process.pid}.tmp`;
+      rename: () => { throw new Error('rename failed in test'); },
+    }), /store persist failed/);
     assert.equal(readFileSync(f, 'utf8'), oldBody);
-    assert.equal(existsSync(tmp), false);
-    assert.equal(removeCalled, true);
-    assert.equal(statSync(f).mtimeMs, before);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

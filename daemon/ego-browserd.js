@@ -21,7 +21,8 @@ import {
   copyFileNoFollow,
   downloadPathInDir,
 } from './path-guards.js';
-import { isForbiddenHostOrigin, RPC_MAX_BODY, rpcTooLargePayload } from './http-guard.js';
+import { rejectIfForbiddenHostOrigin, RPC_MAX_BODY, writeRpcTooLarge } from './http-guard.js';
+import { clampEvalTimeout } from './eval-race.js';
 import { loopbackPortLabel } from './redact.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,7 +54,7 @@ async function attachChrome() {
       try {
         wsUrl = validateLoopbackDebuggerWsUrl(info.webSocketDebuggerUrl, CHROME_DEBUG_PORT);
       } catch {
-        log('拒絕 Chromium debugger WebSocket URL');
+        log('rejected Chromium debugger WebSocket URL');
         throw new Error('unexpected webSocketDebuggerUrl');
       }
       const cdp = new Cdp(wsUrl, 'chrome');
@@ -239,10 +240,7 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
-  if (isForbiddenHostOrigin(req.headers)) {
-    res.writeHead(403).end('forbidden host/origin');
-    return;
-  }
+  if (rejectIfForbiddenHostOrigin(req, res)) return;
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -282,8 +280,7 @@ const server = createServer(async (req, res) => {
     for await (const c of req) {
       total += c.length;
       if (total > RPC_MAX_BODY) {
-        res.writeHead(413, { 'content-type': 'application/json' }).end(rpcTooLargePayload());
-        req.destroy();
+        await writeRpcTooLarge(req, res);
         return;
       }
       chunks.push(c);
@@ -580,7 +577,7 @@ async function pageCall(p) {
     }
     case 'evaluate': {
       const src = typeof args[0] === 'function' ? args[0].toString() : String(args[0]);
-      const timeout = Number(args[2]?.timeout) > 0 ? Number(args[2].timeout) : 30000;
+      const timeout = clampEvalTimeout(args[2]?.timeout, 30000);
       result = await h.evaluate(tid, src, args[1], { timeout });
       break;
     }

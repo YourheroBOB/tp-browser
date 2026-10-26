@@ -49,10 +49,6 @@ if [ "$HEADED" -eq 1 ] && [ -f /proc/version ] && grep -qi microsoft /proc/versi
   if [ -n "$WIN_USER" ]; then
     WIN_EGO_DIR="$(pick_win_ego_linux_dir /mnt/c/Users "$WIN_USER" || true)"
   fi
-  if [ -z "$WIN_EGO_DIR" ]; then
-    echo "ERROR: WSL headed start needs the current Windows user ego-linux dir; will not fall back to another account." >&2
-    exit 1
-  fi
   if [ -x "$WIN_PS" ] && [ -n "$WIN_EGO_DIR" ]; then
     WIN_SCRIPT="C:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
     if [ "$RESTART" -eq 1 ]; then

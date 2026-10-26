@@ -1,7 +1,6 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-// writeFileSync/renameSync/rmSync used by persistJsonAtomic defaults.
 import { dirname } from 'node:path';
 
 export function persistJsonAtomic(file, body, fsOps = {}) {
@@ -10,11 +9,25 @@ export function persistJsonAtomic(file, body, fsOps = {}) {
   const remove = fsOps.remove ?? rmSync;
   const tmp = `${file}.${process.pid}.tmp`;
   writeFile(tmp, body, { mode: 0o600 });
+  let renameErr = null;
+  for (let i = 0; i < 2; i++) {
+    try {
+      rename(tmp, file);
+      return { ok: true, retried: i > 0 };
+    } catch (e) {
+      renameErr = e;
+    }
+  }
   try {
-    rename(tmp, file);
-  } catch (e) {
-    console.error('[ego-browserd] store persist rename failed; keeping previous file:', e?.name || 'Error', e?.message || String(e));
+    writeFile(file, body, { mode: 0o600 });
     try { remove(tmp, { force: true }); } catch {}
+    return { ok: true, fallback: true };
+  } catch (e2) {
+    try { remove(tmp, { force: true }); } catch {}
+    const err = new Error(`store persist failed: ${e2?.message || e2}`);
+    err.cause = e2;
+    err.renameError = renameErr;
+    throw err;
   }
 }
 

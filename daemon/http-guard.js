@@ -14,3 +14,22 @@ export function rpcTooLargePayload() {
     error: { name: 'BadRequest', message: `request body too large (max ${RPC_MAX_BODY} bytes)` },
   });
 }
+
+export function rejectIfForbiddenHostOrigin(req, res) {
+  if (!isForbiddenHostOrigin(req.headers)) return false;
+  res.writeHead(403).end('forbidden host/origin');
+  return true;
+}
+
+export function writeRpcTooLarge(req, res) {
+  return new Promise((resolve) => {
+    res.writeHead(413, {
+      'content-type': 'application/json',
+      connection: 'close',
+    });
+    res.end(rpcTooLargePayload(), () => {
+      req.destroy();
+      resolve();
+    });
+  });
+}

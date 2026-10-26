@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync, chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,8 +11,10 @@ import {
   downloadPathInDir,
   safePath,
   writeFileNoFollow,
+  copyFileNoFollow,
   acceptDomMark,
   nextDomMark,
+  DOM_MARK_RE,
 } from '../../daemon/path-guards.js';
 
 const PORT = 9773;
@@ -41,6 +43,9 @@ test('safeDownloadEntryName and downloadPathInDir block traversal', () => {
     assert.equal(downloadPathInDir(dir, 'ok.txt'), join(dir, 'ok.txt'));
     const uuid = '123e4567-e89b-12d3-a456-426614174000';
     assert.equal(downloadPathInDir(dir, uuid), join(dir, uuid));
+    assert.equal(safeDownloadEntryName('report..final.pdf'), 'report..final.pdf');
+    assert.equal(downloadPathInDir(dir, 'v1..2.txt'), join(dir, 'v1..2.txt'));
+    assert.equal(safeDownloadEntryName('年度報告..pdf'), '年度報告..pdf');
     for (const bad of ['', '../../.ssh/id_rsa', '..', 'foo/../../etc/passwd', '/etc/passwd', '..\\secret.txt', 'a/../b', '\0x']) {
       assert.throws(() => safeDownloadEntryName(bad), /invalid download/);
       assert.throws(() => downloadPathInDir(dir, bad), /invalid download/);
@@ -76,6 +81,39 @@ test('writeFileNoFollow rejects leaf symlink and keeps target', () => {
   }
 });
 
+test('writeFileNoFollow does not chmod an existing file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tp-mode-'));
+  try {
+    const f = join(dir, 'shot.png');
+    writeFileSync(f, 'old', { mode: 0o644 });
+    chmodSync(f, 0o644);
+    writeFileNoFollow(f, Buffer.from('new'), { mode: 0o600 });
+    assert.equal(readFileSync(f, 'utf8'), 'new');
+    assert.equal(statSync(f).mode & 0o777, 0o644);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('copyFileNoFollow streams without following dest symlink', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tp-cp-'));
+  try {
+    const src = join(dir, 'src.bin');
+    const dest = join(dir, 'dest.bin');
+    writeFileSync(src, 'hello-copy');
+    copyFileNoFollow(src, dest, { mode: 0o600 });
+    assert.equal(readFileSync(dest, 'utf8'), 'hello-copy');
+    const keep = join(dir, 'keep.bin');
+    writeFileSync(keep, 'KEEP');
+    const leaf = join(dir, 'leaf.bin');
+    symlinkSync(keep, leaf);
+    assert.throws(() => copyFileNoFollow(src, leaf, { mode: 0o600 }), { name: 'BadPath' });
+    assert.equal(readFileSync(keep, 'utf8'), 'KEEP');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('safePath mustExist still resolves real files', () => {
   const dir = mkdtempSync(join(tmpdir(), 'tp-sp-'));
   try {
@@ -87,11 +125,27 @@ test('safePath mustExist still resolves real files', () => {
   }
 });
 
-test('acceptDomMark requires exact daemon mark', () => {
-  const expected = nextDomMark(1);
-  assert.equal(expected, 'ego-1');
-  assert.equal(acceptDomMark('ego-1', expected), true);
-  assert.equal(acceptDomMark('ego-2', expected), false);
-  assert.equal(acceptDomMark('ego-1"],input', expected), false);
-  assert.equal(acceptDomMark('egoid-abc', expected), false);
+test('safePath allows foo..bar names and rejects .. segments', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tp-dotdot-'));
+  try {
+    const nested = join(dir, 'foo..bar');
+    mkdirSync(nested);
+    const file = join(nested, 'x.png');
+    writeFileSync(file, 'z');
+    assert.equal(safePath(file), file);
+    assert.throws(() => safePath(`${dir}/../outside.png`), /path traversal/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('acceptDomMark requires exact daemon nonce', () => {
+  const expected = nextDomMark();
+  assert.match(expected, DOM_MARK_RE);
+  assert.equal(acceptDomMark(expected, expected), true);
+  assert.equal(acceptDomMark('ego-1', expected), false);
+  assert.equal(acceptDomMark(`${expected}"],input`, expected), false);
+  const other = nextDomMark();
+  assert.notEqual(other, expected);
+  assert.equal(acceptDomMark(other, expected), false);
 });

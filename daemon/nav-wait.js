@@ -1,4 +1,15 @@
 // Decide whether the current document URL means this goto has finished.
+// Exact path (slash-normalized). Prefix matches like /a vs /a/b are not "arrived".
+// http↔https and trailing slash still count. A target query/hash must still match.
+
+function defaultPort(protocol) {
+  return protocol === 'https:' ? '443' : '80';
+}
+
+function normPath(pathname) {
+  if (pathname === '/') return '/';
+  return String(pathname || '/').replace(/\/+$/, '') || '/';
+}
 
 export function navigationReached(currentHref, targetHref) {
   let cur;
@@ -9,17 +20,19 @@ export function navigationReached(currentHref, targetHref) {
   } catch {
     return false;
   }
-  if (cur.protocol !== target.protocol) return false;
-  if (cur.hostname !== target.hostname) return false;
-  const curPort = cur.port || (cur.protocol === 'https:' ? '443' : '80');
-  const targetPort = target.port || (target.protocol === 'https:' ? '443' : '80');
-  if (curPort !== targetPort) return false;
-  const targetHasSearchOrHash = target.search !== '' || target.hash !== '';
-  if (targetHasSearchOrHash) {
-    return cur.pathname === target.pathname && cur.search === target.search && cur.hash === target.hash;
+  const httpish = (p) => p === 'http:' || p === 'https:';
+  if (!httpish(cur.protocol) || !httpish(target.protocol)) {
+    if (cur.protocol !== target.protocol) return false;
   }
-  if (cur.pathname === target.pathname) return true;
-  const prefix = target.pathname.replace(/\/$/, '') + '/';
-  if (prefix === '/') return false;
-  return cur.pathname.startsWith(prefix);
+  if (cur.hostname !== target.hostname) return false;
+  const curPort = cur.port || defaultPort(cur.protocol);
+  const targetPort = target.port || defaultPort(target.protocol);
+  const defaultHttpPorts = (cur.port === '' && target.port === '' && httpish(cur.protocol) && httpish(target.protocol));
+  if (!defaultHttpPorts && curPort !== targetPort) return false;
+  if (normPath(cur.pathname) !== normPath(target.pathname)) return false;
+  // If the target asked for a query/hash, require it. An empty current search
+  // must not count as arrived (that would accept goto('/?z') while still on '/').
+  if (target.search && cur.search !== target.search) return false;
+  if (target.hash && cur.hash !== target.hash) return false;
+  return true;
 }

@@ -8,9 +8,10 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { navigationReached } from './nav-wait.js';
 import { collectResetDomains, cookieDomainMatches } from './site-auth-domains.js';
-import { raceEvalWithTimeout, truncateEvalResult, truncateFetchResult } from './eval-race.js';
+import { raceEvalWithTimeout, clampEvalTimeout, finalizeEvalResult, attachSaveAsPayload, raceMouseAck } from './eval-race.js';
 import { acceptDomMark, nextDomMark } from './path-guards.js';
 import { hostOnly, shouldBufferCdpEvent } from './redact.js';
+import { applyTargetInfoChanged } from './page-title.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INPAGE_SRC = readFileSync(join(__dirname, 'inpage.agent.js'), 'utf8');
@@ -231,7 +232,6 @@ export class BrowserHub {
     this.cookieVault = new Map(); // cookieKey -> cookie
     this.storageVault = {}; // origin -> { ls: [[k,v]], ss: [[k,v]], updatedAt }
     this._loadVaultsFromDisk();
-    this._domMarkSeq = 1;
     this._wire();
     this._sweepTick = 0;
     this._sweepTimer = setInterval(() => {
@@ -653,6 +653,10 @@ export class BrowserHub {
       if (tid && this.sessions.has(tid)) this.sessions.delete(tid);
       return;
     }
+    if (method === 'Target.targetInfoChanged') {
+      applyTargetInfoChanged(this.sessions, params);
+      return;
+    }
     if (method === 'Browser.downloadWillBegin') {
       const { guid, url, suggestedFilename, frameId } = params;
       let targetId = null;
@@ -679,26 +683,19 @@ export class BrowserHub {
           st.mainFrameId = params.frame.id;
           st.url = params.frame.url || '';
           st.domReady = false;
-          this.cdp.send('Runtime.evaluate', {
-            expression: 'document.title',
-            returnByValue: true,
-          }, { sessionId: st.sessionId }).then((r) => {
-            const t = r?.result?.value;
-            if (typeof t === 'string' && t) st.title = t;
-          }).catch(() => {});
+          this._refreshDocumentTitle(st);
           this._injectOriginStorageIfPresent(st);
           this._ensureCoRideBar(st, false);
         }
         return;
-      case 'Page.documentTitleChanged':
-        if (params && params.title != null) st.title = String(params.title);
-        return;
       case 'Page.domContentEventFired':
         st.domReady = true;
+        this._refreshDocumentTitle(st);
         this._ensureCoRideBar(st, true);
         return;
       case 'Page.loadEventFired':
         st.domReady = true;
+        this._refreshDocumentTitle(st);
         this._ensureCoRideBar(st, true);
         this.syncVaultNow().catch(() => {});
         return;
@@ -745,10 +742,25 @@ export class BrowserHub {
         }
         return;
       default:
+        if (method === 'Target.targetInfoChanged') {
+          applyTargetInfoChanged(this.sessions, params);
+          return;
+        }
         if (!shouldBufferCdpEvent(method)) return;
         st.events.push({ method, params });
         if (st.events.length > 300) st.events.splice(0, st.events.length - 300);
     }
+  }
+
+  _refreshDocumentTitle(st) {
+    if (!st?.sessionId) return;
+    this.cdp.send('Runtime.evaluate', {
+      expression: 'document.title',
+      returnByValue: true,
+    }, { sessionId: st.sessionId }).then((r) => {
+      const t = r?.result?.value;
+      if (typeof t === 'string') st.title = t;
+    }).catch(() => {});
   }
 
   sessionOf(targetId) {
@@ -879,15 +891,10 @@ export class BrowserHub {
     const st = this.sessionOf(targetId);
     // A synchronous JS dialog opened by this very input can block the
     // renderer's command response forever; the input itself is already
-    // dispatched, so never wait longer than 1.5s for the ack.
+    // dispatched, so never wait longer than 1.5s for the ack. CDP errors
+    // (closed target / dropped connection) still propagate.
     const sent = this.cdp.send('Input.dispatchMouseEvent', { type, x: Math.round(x), y: Math.round(y), button: BTN[button] || 'left', clickCount, buttons: type === 'mouseReleased' ? 0 : 1, modifiers }, { sessionId: st.sessionId });
-    sent.catch(() => {});
-    const raced = await Promise.race([
-      sent.then(() => 'ok'),
-      sleep(1500).then(() => 'timeout'),
-    ]);
-    if (raced === 'ok') return;
-    // Timeout: dialog may have blocked the renderer ack; the input was dispatched.
+    return raceMouseAck(sent, 1500, sleep);
   }
 
   async click(targetId, selector, opts = {}) {
@@ -1069,27 +1076,28 @@ export class BrowserHub {
     return res.data; // base64
   }
 
-  async evaluate(targetId, fnSource, arg, { timeout = 30000 } = {}) {
+  async evaluate(targetId, fnSource, arg, { timeout = 30000, truncate = true } = {}) {
+    const timeoutMs = clampEvalTimeout(timeout, 30000);
     const argJson = JSON.stringify(arg === undefined ? null : arg);
     const expression = `(async()=>{try{const __f=(${fnSource});const v=typeof __f==='function'?await __f(${argJson}):await __f;return {__ok:true,v:v===undefined?null:v}}catch(e){return {__ok:false,e:String(e&&e.message||e)}}})()`;
     const st = this.sessionOf(targetId);
     let res;
     try {
       res = await raceEvalWithTimeout(
-        this.cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, { sessionId: st.sessionId, timeout: timeout + 5000 }),
-        timeout,
+        this.cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, { sessionId: st.sessionId, timeout: timeoutMs + 5000 }),
+        timeoutMs,
         () => { this.cdp.send('Runtime.terminateExecution', {}, { sessionId: st.sessionId }).catch(() => {}); },
       );
     } catch (e) {
       if (e.code === 'evalTimeout' || /timed out/.test(e.message)) {
-        throw new EgoError('TimeoutError', `page.evaluate safety timeout after ${timeout}ms (executionStopped)`);
+        throw new EgoError('TimeoutError', `page.evaluate safety timeout after ${timeoutMs}ms (executionStopped)`);
       }
       throw e;
     }
     if (res.exceptionDetails) throw new EgoError('PageError', String(res.exceptionDetails.exception?.description || res.exceptionDetails.text).split('\n')[0]);
     const v = res.result?.value;
     if (v && v.__ok === false) throw new EgoError('PageError', v.e);
-    return truncateEvalResult(v ? v.v : null);
+    return finalizeEvalResult(v ? v.v : null, { truncate });
   }
 
   async fetchIn(targetId, url, options = {}) {
@@ -1107,11 +1115,8 @@ export class BrowserHub {
       return { ok: r.ok, status: r.status, statusText: r.statusText, url: r.url, headers, body, b64 };
     }`;
     const opts = { ...fetchOpts, __saveAs: !!saveAs };
-    const v = await this.evaluate(targetId, src, [url, opts], { timeout: 60000 });
-    if (v && v.__truncated) return v;
-    const out = truncateFetchResult(v);
-    if (saveAs && out && out.b64 !== null && out.b64 !== undefined) out.__b64 = out.b64;
-    return out;
+    const v = await this.evaluate(targetId, src, [url, opts], { timeout: 60000, truncate: !saveAs });
+    return attachSaveAsPayload(v, saveAs);
   }
 
   // ---- dialogs ----
@@ -1137,18 +1142,21 @@ export class BrowserHub {
     const info = await this.call(targetId, 'fileInfo', JSON.stringify([r.hid]));
     if (!info) throw new EgoError('ElementResolutionError', `page.setInputFiles: no file input resolves from ${selector}`);
     if (files.length > 1 && !info.multiple) throw new EgoError('NotSupportedError', 'input does not accept multiple files');
-    const expected = nextDomMark(this._domMarkSeq++);
-    const mark = await this.call(targetId, 'markForDom', JSON.stringify([r.hid, expected]));
-    if (!acceptDomMark(mark, expected)) throw new EgoError('PageError', 'invalid DOM mark');
-    const st = this.sessionOf(targetId);
-    const doc = await this.cdp.send('DOM.getDocument', { depth: 0 }, { sessionId: st.sessionId });
-    const node = await this.cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: `[data-ego-dom="${expected}"]` }, { sessionId: st.sessionId });
-    if (!node.nodeId) throw new EgoError('ElementResolutionError', `page.setInputFiles: DOM lookup failed for ${selector}`);
-    const resolved = await this.cdp.send('DOM.resolveNode', { nodeId: node.nodeId }, { sessionId: st.sessionId });
-    await this.cdp.send('DOM.setFileInputFiles', { files, backendNodeId: resolved.backendNodeId ?? undefined, nodeId: node.nodeId }, { sessionId: st.sessionId });
-    await this.evalIn(targetId, `(document.querySelector('[data-ego-dom="${expected}"]')||{}).removeAttribute?.('data-ego-dom')`);
-    const receipt = await this.actionReceipt(targetId, Date.now() - 1000);
-    return receipt;
+    const expected = nextDomMark();
+    try {
+      const mark = await this.call(targetId, 'markForDom', JSON.stringify([r.hid, expected]));
+      if (!acceptDomMark(mark, expected)) throw new EgoError('PageError', 'invalid DOM mark');
+      const st = this.sessionOf(targetId);
+      const doc = await this.cdp.send('DOM.getDocument', { depth: 0 }, { sessionId: st.sessionId });
+      const node = await this.cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: `[data-ego-dom="${expected}"]` }, { sessionId: st.sessionId });
+      if (!node.nodeId) throw new EgoError('ElementResolutionError', `page.setInputFiles: DOM lookup failed for ${selector}`);
+      const resolved = await this.cdp.send('DOM.resolveNode', { nodeId: node.nodeId }, { sessionId: st.sessionId });
+      await this.cdp.send('DOM.setFileInputFiles', { files, backendNodeId: resolved.backendNodeId ?? undefined, nodeId: node.nodeId }, { sessionId: st.sessionId });
+      const receipt = await this.actionReceipt(targetId, Date.now() - 1000);
+      return receipt;
+    } finally {
+      await this.evalIn(targetId, `(document.querySelector('[data-ego-dom="${expected}"]')||{}).removeAttribute?.('data-ego-dom')`).catch(() => {});
+    }
   }
 
   async enableChooserIntercept(targetId, on) {

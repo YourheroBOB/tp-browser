@@ -141,9 +141,15 @@ PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
 OS="$(uname -s)"
 # macOS Chrome blocks a fresh profile on the "Chrome Safe Storage" keychain prompt.
 # --use-mock-keychain is Darwin-only; an empty MAC_FLAGS must stay unquoted so Linux gets no extra argv.
+# RG-A12b2: only for a profile TP creates fresh (or one already started that way, recorded in .tp-mock-keychain).
+# An existing profile keeps the real keychain so data already encrypted with "Chrome Safe Storage" still decrypts.
+# TP_MOCK_KEYCHAIN=0 turns it off; the prompt then needs one click on first launch.
 MAC_FLAGS=""
-if [ "$OS" = "Darwin" ]; then
-  MAC_FLAGS="--use-mock-keychain"
+if [ "$OS" = "Darwin" ] && [ "${TP_MOCK_KEYCHAIN:-1}" != 0 ]; then
+  if [ -f "$PROFILE_DIR/.tp-mock-keychain" ] || [ ! -e "$PROFILE_DIR/Local State" ]; then
+    MAC_FLAGS="--use-mock-keychain"
+    mkdir -p "$PROFILE_DIR" 2>/dev/null && : > "$PROFILE_DIR/.tp-mock-keychain" 2>/dev/null || true
+  fi
 fi
 BROWSER_BIN="${TP_BROWSER_BIN:-}"
 if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then

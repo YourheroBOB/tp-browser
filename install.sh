@@ -105,8 +105,9 @@ TP_PATH_NOTE=""
 if [ "$(uname -s)" = "Darwin" ]; then
   _reachable=0
   if tp_dir_on_path "$BIN_DIR"; then _reachable=1; fi
-  if tp_dir_on_path /usr/local/bin && [ -x /usr/local/bin/tp-start ]; then _reachable=1; fi
-  if tp_dir_on_path /opt/homebrew/bin && [ -x /opt/homebrew/bin/tp-start ]; then _reachable=1; fi
+  # RG-A12e2: a tp-start elsewhere on PATH counts only if it is our link, not an old or unrelated copy.
+  if tp_dir_on_path /usr/local/bin && [ "$(readlink /usr/local/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
+  if tp_dir_on_path /opt/homebrew/bin && [ "$(readlink /opt/homebrew/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
   if [ "$_reachable" -eq 0 ]; then
     MARK="# tp-browser PATH"
     ZPROF="$HOME/.zprofile"
@@ -114,7 +115,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
       TP_PATH_NOTE="already"
     elif [ -f "$ZPROF" ] && grep -qF "$BIN_DIR" "$ZPROF"; then
       TP_PATH_NOTE="already"
-    elif printf '\nexport PATH="%s:$PATH" %s\n' "$BIN_DIR" "$MARK" >> "$ZPROF"; then
+    # RG-A12e2: single-quote the path (escaping any ') so $, ` or " in it are never evaluated by zsh.
+    elif _q="$(printf '%s' "$BIN_DIR" | sed "s/'/'\\\\''/g")" && printf '\nexport PATH='"'"'%s'"'"':"$PATH" %s\n' "$_q" "$MARK" >> "$ZPROF"; then
       TP_PATH_NOTE="appended"
     else
       TP_PATH_NOTE="failed"

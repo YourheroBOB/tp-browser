@@ -17,7 +17,9 @@ ok('raw cdp attach refused while handed off', e && e.name === 'HandedOffError', 
 const other = await taskSpace('rg-a4-other');
 e = await err(() => other.cdp('Runtime.evaluate', { expression: '1' }));
 ok('raw cdp from another space refused while one is handed off', e && e.name === 'HandedOffError', e ? e.name : 'no error');
-ok('read-only Target.getTargets still allowed', Array.isArray((await t.cdp('Target.getTargets', {})).targetInfos));
+e = await err(() => t.cdp('Target.getTargets', {}));
+ok('Target.getTargets refused while handed off (tab URLs may hold secrets)', e && e.name === 'HandedOffError', e ? e.name : 'no error');
+ok('Browser.getVersion still allowed', (await t.cdp('Browser.getVersion', {})).product !== undefined);
 await other.finish();
 ok('url still readable', (await p.url()).startsWith(FX));
 const again = await taskSpace(t.spaceId);

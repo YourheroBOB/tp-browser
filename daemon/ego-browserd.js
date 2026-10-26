@@ -559,7 +559,8 @@ function spaceView(spaceId) {
 }
 
 const HANDOFF_ALLOWED = new Set(['url', 'title', 'info', 'events', 'noop']);
-const CDP_ALLOWED_WHILE_HANDED_OFF = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'SystemInfo.getInfo']);
+// RG-A4d: Target.getTargets/getTargetInfo return every tab's URL and title (may carry OAuth codes or signed links), so they are blocked too.
+const CDP_ALLOWED_WHILE_HANDED_OFF = new Set(['Browser.getVersion', 'SystemInfo.getInfo']);
 
 async function pageCall(p) {
   const h = requireHub();

@@ -7,7 +7,9 @@ param(
 )
 
 $ErrorActionPreference = "SilentlyContinue"
-$DataDir = Join-Path $HOME ".local\share\ego-linux"
+# same base dir node os.homedir() uses on Windows, so an isolated USERPROFILE isolates both
+$HomeBase = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+$DataDir = Join-Path $HomeBase ".local\share\ego-linux"
 $ProfileDir = Join-Path $DataDir "profile-agent"
 $LogsDir = Join-Path $DataDir "logs"
 $DaemonJs = Join-Path $DataDir "daemon\ego-browserd.js"
@@ -28,6 +30,11 @@ if (-not $UseAlt) {
 
 $DaemonPort = if ($UseAlt) { 9774 } else { 9772 }
 $ChromePort = if ($UseAlt) { 9775 } else { 9773 }
+# FIX-1151022 / RG-A7: explicit ports win so isolated instances never touch 9772
+if ($env:EGO_BROWSERD_PORT) { $DaemonPort = [int]$env:EGO_BROWSERD_PORT }
+if ($env:EGO_CHROME_PORT) { $ChromePort = [int]$env:EGO_CHROME_PORT }
+$env:EGO_BROWSERD_PORT = "$DaemonPort"; $env:EGO_CHROME_PORT = "$ChromePort"
+. (Join-Path $PSScriptRoot "tp-proc.ps1")
 
 # 2. Discover preferred Windows Chromium-based browser binary (Edge vs Chrome)
 $BrowserBin = $env:TP_BROWSER_BIN
@@ -82,7 +89,7 @@ if (-not $Restart) {
             } elseif ($Headed) {
                 $HeadedProc = @(Get-CimInstance Win32_Process | Where-Object {
                     ($_.Name -ieq $TargetExeName) -and
-                    ($_.CommandLine -like "*ego-linux*profile-agent*") -and
+                    ($_.CommandLine -like "*--user-data-dir=$ProfileDir*") -and
                     ($_.CommandLine -like "*--tp-interactive-gui=1*") -and
                     ($_.CommandLine -notlike "*--headless*") -and
                     ($_.SessionId -ge 1)
@@ -99,22 +106,11 @@ if (-not $Restart) {
 }
 
 # 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes
-# RG-A6: /flush-and-close requires the daemon token
-try {
-    $TokFile = Join-Path $DataDir "token"
-    if (Test-Path $TokFile) {
-        $Tok = (Get-Content -Raw $TokFile).Trim()
-        Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/flush-and-close" -Headers @{ "x-tp-token" = $Tok } -TimeoutSec 3 | Out-Null
-    }
-} catch {}
+Invoke-TpFlushClose $DataDir $DaemonPort
 Start-Sleep -Milliseconds 1000
 
-Get-CimInstance Win32_Process | Where-Object {
-    ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
-    ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
-} | ForEach-Object {
-    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-}
+# RG-A7: stop only this instance's processes
+$null = Stop-TpScoped $DataDir $ProfileDir $DaemonPort
 Start-Sleep -Milliseconds 800
 
 @("SingletonLock", "SingletonCookie", "SingletonSocket") | ForEach-Object {
@@ -145,7 +141,7 @@ if (Test-Path $ProfileInitJs) {
 # 6. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens
 $AltFlag = if ($UseAlt) { " --alt-port" } else { "" }
 $DaemonCmdLine = "`"$NodeBin`" --experimental-websocket `"$DaemonJs`"$AltFlag"
-Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine } | Out-Null
+$DaemonPid = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine }).ProcessId
 Start-Sleep -Milliseconds 400
 
 # 7. Launch Chrome/Edge with CDP on $ChromePort
@@ -156,7 +152,7 @@ $CurrentSessionId = (Get-Process -Id $PID).SessionId
 
 if (-not $Headed) {
     $ChromeCmdLine = "`"$BrowserBin`" --headless=new $CommonFlags"
-    Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $ChromeCmdLine } | Out-Null
+    $BrowserPid = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $ChromeCmdLine }).ProcessId
 } elseif ($CurrentSessionId -eq 0) {
     # Break out of Windows SSH Session 0 into the user's interactive desktop (Session 1+) via Task Scheduler (/IT)
     $GuiPs1 = Join-Path $DataDir "scripts\launch-headed-gui.ps1"
@@ -169,8 +165,9 @@ if (-not $Headed) {
     & schtasks.exe /Create /TN $TaskName /TR $TaskTr /SC ONCE /ST 00:00 /IT /F 2>$null | Out-Null
     & schtasks.exe /Run /TN $TaskName 2>$null | Out-Null
 } else {
-    Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags -WindowStyle Normal | Out-Null
+    $BrowserPid = (Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags -WindowStyle Normal -PassThru).Id
 }
+Set-Content -Path (Join-Path $DataDir "tp-pids-$DaemonPort") -Value @("daemon=$DaemonPid", "chrome=$BrowserPid") -Encoding ASCII
 
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
@@ -208,7 +205,7 @@ for ($i = 0; $i -lt 24; $i++) {
         if ($h.ok -and $h.chrome) {
             $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 1
             $ProcInfo = @(Get-CimInstance Win32_Process | Where-Object {
-                ($_.Name -ieq $TargetExeName) -and ($_.CommandLine -like "*ego-linux*profile-agent*") -and ($_.CommandLine -notlike "*--type=*")
+                ($_.Name -ieq $TargetExeName) -and ($_.CommandLine -like "*--user-data-dir=$ProfileDir*") -and ($_.CommandLine -notlike "*--type=*")
             })
             $MainPid = if ($ProcInfo.Count -gt 0) { $ProcInfo[0].ProcessId } else { 0 }
             $MainSess = if ($ProcInfo.Count -gt 0) { $ProcInfo[0].SessionId } else { -1 }

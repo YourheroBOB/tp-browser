@@ -38,7 +38,7 @@ for s in "$REPO"/tests/smoke.ego.js "$REPO"/tests/isolated/*.ego.js; do
   echo "=== $(basename "$s")"
   # RG-A5d: a script's process.exitCode does not always reach the CLI exit status, so any FAIL line fails the run.
   node "$REPO/bin/ego-browser.js" nodejs < "$s" > "$T/out.txt" 2>&1 || RC=1
-  cat "$T/out.txt"; grep -q '^FAIL' "$T/out.txt" && RC=1
+  cat "$T/out.txt"; if grep -q '^FAIL' "$T/out.txt"; then RC=1; fi
 done
 # RG-A2: session cookie must stay a session cookie and no vault files unless TP_SESSION_VAULT=1.
 kind=$(node --experimental-websocket "$REPO/tests/isolated/cdp-cookie.mjs" "$CP" tp_a2_sess 2>/dev/null || echo error)

@@ -480,11 +480,12 @@ async function dispatch(method, p) {
     case 'download.call': return downloadCall(p);
     case 'task.cdp': {
       const h = requireHub();
-      // RG-A4b: raw browser-level CDP from a TaskSpace is refused while a human holds that space,
-      // otherwise handOff could be bypassed (Target.attachToTarget + Input.* / Runtime.evaluate).
-      if (p.spaceId != null) {
-        const sp = store.get(p.spaceId);
-        if (sp && sp.state === 'handed-off') throw new EgoError('HandedOffError', `space ${sp.id} is held by a human; call waitForControl() first (blocked: cdp ${p.method})`);
+      // RG-A4b/A4c: task.cdp is browser-level (it can attach to ANY tab), so the caller-supplied
+      // spaceId cannot be trusted. While any space is held by a human, only read-only browser
+      // metadata methods are allowed.
+      const held = store.list().filter((s) => s.state === 'handed-off');
+      if (held.length && !CDP_ALLOWED_WHILE_HANDED_OFF.has(p.method)) {
+        throw new EgoError('HandedOffError', `space ${held.map((s) => s.id).join(',')} is held by a human; call waitForControl() first (blocked: cdp ${p.method})`);
       }
       return h.cdp.send(p.method, p.params || {}, { timeout: p.timeout || 30000 });
     }
@@ -558,6 +559,8 @@ function spaceView(spaceId) {
 }
 
 const HANDOFF_ALLOWED = new Set(['url', 'title', 'info', 'events', 'noop']);
+const CDP_ALLOWED_WHILE_HANDED_OFF = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'SystemInfo.getInfo']);
+
 async function pageCall(p) {
   const h = requireHub();
   const sp = store.get(p.spaceId);

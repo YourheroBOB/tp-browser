@@ -105,9 +105,9 @@ TP_PATH_NOTE=""
 if [ "$(uname -s)" = "Darwin" ]; then
   _reachable=0
   if tp_dir_on_path "$BIN_DIR"; then _reachable=1; fi
-  # RG-A12e2: a tp-start elsewhere on PATH counts only if it is our link, not an old or unrelated copy.
-  if tp_dir_on_path /usr/local/bin && [ "$(readlink /usr/local/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
-  if tp_dir_on_path /opt/homebrew/bin && [ "$(readlink /opt/homebrew/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
+  # RG-A12e2/e3: a tp-start elsewhere on PATH counts only if it is our link and resolves to an executable (no dangling link).
+  if tp_dir_on_path /usr/local/bin && [ -x /usr/local/bin/tp-start ] && [ "$(readlink /usr/local/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
+  if tp_dir_on_path /opt/homebrew/bin && [ -x /opt/homebrew/bin/tp-start ] && [ "$(readlink /opt/homebrew/bin/tp-start 2>/dev/null)" = "$BIN_DIR/tp-start" ]; then _reachable=1; fi
   if [ "$_reachable" -eq 0 ]; then
     MARK="# tp-browser PATH"
     ZPROF="$HOME/.zprofile"

@@ -69,7 +69,9 @@ const dstBookmarks = join(profileDef, 'Bookmarks');
 const dstAccountBookmarks = join(profileDef, 'AccountBookmarks');
 const dstFavicons = join(profileDef, 'Favicons');
 const syncAuth = process.argv.includes('--sync-auth') || process.argv.includes('--import-auth') || process.env.TP_IMPORT_AUTH === '1';
-const forceSync = process.argv.includes('--force') || syncAuth;
+// RG-A1b: --sync-auth only widens WHAT is copied; it no longer bypasses the size guards that
+// protect newer agent-side files. Use --force explicitly to overwrite.
+const forceSync = process.argv.includes('--force');
 
 const candidates = [];
 const addRoot = (baseDir) => {

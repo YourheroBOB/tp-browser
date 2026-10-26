@@ -21,8 +21,8 @@ chk(){ D="$1"; P="$D/profile-agent/Default"
   done
   if grep -q os_crypt "$D/profile-agent/Local State" 2>/dev/null; then [ "$3" = yes ] && ok "$2 os_crypt copied (opt-in)" || bad "$2 os_crypt copied WITHOUT opt-in"; else [ "$3" = yes ] && bad "$2 os_crypt missing" || ok "$2 os_crypt not copied"; fi
 }
-HOME="$T/home" EGO_LINUX_DATA_DIR="$T/d1" node "$ROOT/tools/profile-init.js" >/dev/null; chk "$T/d1" default no
-HOME="$T/home" EGO_LINUX_DATA_DIR="$T/d2" node "$ROOT/tools/profile-init.js" --sync-auth >/dev/null; chk "$T/d2" sync-auth yes
+HOME="$T/home" USERPROFILE="$T/home" LOCALAPPDATA="$T/home/AppData/Local" APPDATA="$T/home/AppData/Roaming" EGO_LINUX_DATA_DIR="$T/d1" node "$ROOT/tools/profile-init.js" >/dev/null; chk "$T/d1" default no
+HOME="$T/home" USERPROFILE="$T/home" LOCALAPPDATA="$T/home/AppData/Local" APPDATA="$T/home/AppData/Roaming" EGO_LINUX_DATA_DIR="$T/d2" node "$ROOT/tools/profile-init.js" --sync-auth >/dev/null; chk "$T/d2" sync-auth yes
 [ -e "$T/d2/profile-agent/Default/Cookies" ] || [ -e "$T/d2/profile-agent/Default/Network/Cookies" ] && ok "sync-auth cookies copied (opt-in)" || bad "sync-auth cookies not copied"
-HOME="$T/home" TP_IMPORT_AUTH=1 EGO_LINUX_DATA_DIR="$T/d3" node "$ROOT/tools/profile-init.js" >/dev/null; [ -f "$T/d3/profile-agent/Default/Login Data" ] && ok "TP_IMPORT_AUTH=1 opt-in works" || bad "TP_IMPORT_AUTH=1 ignored"
+HOME="$T/home" USERPROFILE="$T/home" LOCALAPPDATA="$T/home/AppData/Local" APPDATA="$T/home/AppData/Roaming" TP_IMPORT_AUTH=1 EGO_LINUX_DATA_DIR="$T/d3" node "$ROOT/tools/profile-init.js" >/dev/null; [ -f "$T/d3/profile-agent/Default/Login Data" ] && ok "TP_IMPORT_AUTH=1 opt-in works" || bad "TP_IMPORT_AUTH=1 ignored"
 echo "A1_RC=$fail"; exit $fail

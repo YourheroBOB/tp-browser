@@ -38,6 +38,13 @@ if (Test-Path $SkillSrc) {
             $sRoot = Join-Path $sBase $sName
             New-Item -ItemType Directory -Force -Path $sRoot | Out-Null
             Copy-Item -Force $SkillSrc (Join-Path $sRoot "SKILL.md")
+            # RG-A9b: SKILL.md links to references\*.md; install them too.
+            $RefSrc = Join-Path $DataDir "skills\tp-browser\references"
+            if (Test-Path $RefSrc) {
+                $RefDst = Join-Path $sRoot "references"
+                New-Item -ItemType Directory -Force -Path $RefDst | Out-Null
+                Copy-Item -Force (Join-Path $RefSrc "*.md") $RefDst
+            }
         }
     }
     Write-Output "Installed AI Agent Skill (SKILL.md) to ~/.claude/skills, ~/.agents/skills, ~/.codex/skills (tp-browser + ego-browser)"
@@ -125,7 +132,12 @@ if ($StartupDir -and (Test-Path $StartupDir)) {
     Write-Output "Installed Windows Startup launcher: $VbsPath"
 }
 
-Write-Output "=== [2] Starting TP Browser Service ==="
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $DataDir "scripts\ego-start.ps1")
-& (Join-Path $LocalBin "ego-browser.cmd") version
-& (Join-Path $LocalBin "ego-browser.cmd") status
+# TP_NO_START=1 skips launching the browser and daemon (isolated installs / tests).
+if ($env:TP_NO_START -eq "1") {
+    Write-Output "=== [2] TP_NO_START=1, skipped starting TP ==="
+} else {
+    Write-Output "=== [2] Starting TP Browser Service ==="
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $DataDir "scripts\ego-start.ps1")
+    & (Join-Path $LocalBin "ego-browser.cmd") version
+    & (Join-Path $LocalBin "ego-browser.cmd") status
+}

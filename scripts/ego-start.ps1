@@ -141,7 +141,12 @@ if (Test-Path $ProfileInitJs) {
 # 6. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens
 $AltFlag = if ($UseAlt) { " --alt-port" } else { "" }
 $DaemonCmdLine = "`"$NodeBin`" --experimental-websocket `"$DaemonJs`"$AltFlag"
-$DaemonPid = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine }).ProcessId
+# RG-A7b: Win32_Process.Create (used so the daemon survives the SSH/console session) does NOT inherit this
+# shell's environment, so EGO_BROWSERD_PORT / EGO_CHROME_PORT / USERPROFILE overrides were silently lost.
+# Pass the current environment block explicitly.
+$EnvBlock = [string[]](Get-ChildItem env: | ForEach-Object { "$($_.Name)=$($_.Value)" })
+$Startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ EnvironmentVariables = $EnvBlock; ShowWindow = [uint16]0 }
+$DaemonPid = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine; ProcessStartupInformation = $Startup }).ProcessId
 Start-Sleep -Milliseconds 400
 
 # 7. Launch Chrome/Edge with CDP on $ChromePort

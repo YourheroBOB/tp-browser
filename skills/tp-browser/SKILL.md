@@ -1,6 +1,6 @@
 ---
 name: tp-browser
-description: TooPower Browser (tp-browser / ego-browser) — 強到沒朋友 | Zero-dependency Human-Agent Shared Browser for Windows, Linux, and macOS. When you need a browser, read this Skill by default. Use it to open and operate websites, extract lazy-loaded pages, interact with logged-in web apps, handle Cloudflare/2FA/OAuth via Human-Agent Co-Riding (tp-headed / ego-headed), or run multi-step browser automation in a single LLM turn (saving 90%+ tokens vs Playwright MCP / Computer Use).
+description: TooPower Browser (tp-browser / ego-browser) — 強到沒朋友 | Zero-dependency Human-Agent Shared Browser for Windows, Linux, and macOS. When you need a browser, read this Skill by default. Use it to open and operate websites, extract lazy-loaded pages, interact with logged-in web apps, handle Cloudflare/2FA/OAuth via Human-Agent Co-Riding (tp-headed / ego-headed), or run multi-step browser automation in a single LLM turn（瀏覽器操作 token 節省 88.6%（總 token 82.1%；420 秒、雙機 3 任務共 6 組 A/B，Windows，1151018），對照 Playwright MCP / Computer Use）.
 ---
 
 # TooPower Browser (`tp-browser` / `ego-browser`) — Agent Skill Guide
@@ -46,7 +46,7 @@ description: TooPower Browser (tp-browser / ego-browser) — 強到沒朋友 | Z
 ## 2. Core Pattern: Single-Turn Batch JS (`tp-browser nodejs`)
 
 Traditional Playwright MCP / Computer Use tools operate 1 action per LLM turn (`goto` → full DOM snapshot → `scroll` → full DOM snapshot), burning millions of tokens.
-With **`tp-browser nodejs`**, you submit a **complete async JavaScript workflow in a single Turn** via stdin Heredoc (`goto` + scroll loop to defeat lazy-loading + DOM extraction + file write), returning only the final clean output to stdout (**91.7% browser token savings**):
+With **`tp-browser nodejs`**, you submit a **complete async JavaScript workflow in a single Turn** via stdin Heredoc (`goto` + scroll loop to defeat lazy-loading + DOM extraction + file write), returning only the final clean output to stdout（**瀏覽器操作 token 節省 88.6%（總 token 82.1%；420 秒、雙機 3 任務共 6 組 A/B，Windows，1151018）**）:
 
 ```bash
 tp-browser nodejs << 'EOF'

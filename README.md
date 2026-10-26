@@ -8,7 +8,7 @@
 
 它讓消費端使用者與開發者能在三大作業系統上**完全免費、開源**地享有：
 1. **當事人 100% 自持 Cookies 與金鑰主權（Local Cookie Sovereignty）**：所有登入態（Google、ChatGPT、Perplexity、Claude、Kimi 等 3,300+ Cookies 含 `HttpOnly`）100% 留在你自己的電腦本機，零雲端肉機上傳、零第三方伺服器過水。
-2. **單 Turn 批次 JS 執行（`tp-browser nodejs`）狂省 95%+ Token**：告別傳統 Playwright MCP / Computer Use 每步截圖與全頁 DOM 快照的 Token 黑洞。Agent 透過 Heredoc 單次提交完整非同步腳本（自動捲動破除懶加載、DOM 萃取、認證下載一氣呵成）。
+2. **單 Turn 批次 JS 執行（`tp-browser nodejs`）：瀏覽器操作 token 節省 88.6%（總 token 82.1%；420 秒、雙機 3 任務共 6 組 A/B，Windows，1151018）**。告別傳統 Playwright MCP / Computer Use 每步截圖與全頁 DOM 快照的 Token 黑洞。Agent 透過 Heredoc 單次提交完整非同步腳本（自動捲動破除懶加載、DOM 萃取、認證下載一氣呵成）。
 3. **TaskSpace 人機共乘（Human-Agent Co-Riding）**：背景無頭常駐（`tp-start`，零焦點搶占、零彈窗干擾）；遇到 Cloudflare 驗證或 2FA 登入時，一行指令切換有頭視窗（`tp-headed`）由人類接手登入，完成後無縫交還 Agent。
 
 ---
@@ -23,7 +23,7 @@
 | **支援系統** | **Windows + Linux + macOS 三系統全支援** | 僅 macOS 正式版（Windows 封測、Linux 規劃中） | 跨平台但需安裝龐大驅動依賴 |
 | **開源程度** | **100% 核心開源（Apache-2.0）** | 核心閉源 Mach-O 二進位檔（僅公開 Skill 文件） | 開源但無內建 TaskSpace 人機共乘 |
 | **外部依賴** | **0 npm 依賴**（純 Node.js 22 原生 WebSocket + CDP） | 獨立封裝約 200MB+ 應用程式 | 需下載數百 MB 瀏覽器套件與依賴樹 |
-| **操作範式** | **單 Turn 批次 JS REPL（省 95%+ Token）** | 單 Turn 批次 JS REPL | 逐 Turn 快照/截圖往返（高延遲、高 Token） |
+| **操作範式** | **單 Turn 批次 JS REPL（瀏覽器操作 token 節省 88.6%；總 token 82.1%；420 秒、雙機 3 任務共 6 組 A/B，Windows，1151018）** | 單 Turn 批次 JS REPL | 逐 Turn 快照/截圖往返（高延遲、高 Token） |
 | **Cookie 主權** | **100% 使用者本機自持（支援跨機加密遷移）** | 本機自持（限 macOS） | 依配置而定（常因每次重啟遺失登入態） |
 
 > **Clean-Room 獨立實作聲明**：`tp-browser` 的每一行程式碼（約 2,000 行純 ESM JavaScript）均基於 Node.js 22 原生 `WebSocket` 與公開之 Chrome DevTools Protocol (CDP) 標準從零獨立撰寫，未使用 EGo Browser 的任何閉源程式碼、專有元件或商標；同時提供 `ego-browser` 相容 CLI 別名，方便既有 Agent Skill 無痛跨平台遷移。
@@ -37,12 +37,12 @@
 - **Task 2**：注入本地 Cookie 進入 GPT-Dots 頁面提取並分析最近一週對話
 - **Task 3**：研究騰訊開源 MemHub 架構，並操控 Perplexity 網頁進行 2 輪追問與對話存檔
 
-| 測試分組（Task 1 實測對照） | 平均耗時 | 請求輪數 (Turns) | 瀏覽器操作 Tokens | 總耗用 Tokens | 節省倍率 |
-|---|---:|---:|---:|---:|---:|
-| **A 組：TooPower Browser (`tp-browser`)** | **136.3 秒** | **4 Turns** | **44,827** | **64,955** | **基準 (1x)** |
-| **B 組：傳統瀏覽器工具 (`control-browser` REPL)** | 720.1 秒 | 30 Turns | 2,122,536 | 2,639,211 | **耗費 40.6 倍 Token / 慢 5.3 倍** |
+| 測試分組（420 秒、雙機 3 任務共 6 組 A/B） | 瀏覽器操作 Tokens | 總耗用 Tokens | 完成 |
+|---|---:|---:|---:|
+| **A 組：TooPower Browser (`tp-browser`)** | **1,103,960** | **2,044,542** | **6/6** |
+| **B 組：傳統瀏覽器工具 (`control-browser` REPL)** | 9,707,934 | 11,396,985 | 0/6（約 420 秒超時） |
 
-> **實測結論**：在複雜長文與多步互動場景下，**TooPower Browser 節省高達 97.5% 的總 Token 消耗（瀏覽器操作 Token 節省 97.9%），執行速度提升 5.3 倍**；且 A 組在 PC 與 ROG 雙機共 6 項任務達成 **100% 通過率**（雙機 6 任務總計僅耗 486,232 Tokens）。
+> **實測結論**：瀏覽器操作 token 節省 88.6%（總 token 82.1%；420 秒、雙機 3 任務共 6 組 A/B，Windows，1151018）。A 組 6/6 完成，B 組 0/6。數字由 `docs/tp_win_ab_benchmark_results_1151018.json` 的 12 筆加總（2 機 × 3 任務）。同日 720 秒報告另寫瀏覽器操作 token 節省 91.7%（總 token 85.7%；B 組瀏覽器操作 token 13,277,610、總 token 14,332,944）。該組 B 側合計不在這份 JSON，不作主數字。
 
 ---
 

@@ -1,0 +1,28 @@
+// RG-A4: handOff must pause agent page actions; waitForControl must really wait.
+const ok = (n, c, x = '') => { console.log(`${c ? 'PASS' : 'FAIL'} A4 ${n}${x ? ' — ' + x : ''}`); if (!c) process.exitCode = 1; };
+const err = async (f) => { try { await f(); return null; } catch (e) { return e; } };
+const t = await taskSpace('rg-a4');
+const p = t.page('p1');
+await p.goto('http://127.0.0.1:8899/', { waitUntil: 'load' });
+await t.handOff();
+let e = await err(() => p.goto('http://127.0.0.1:8899/?x'));
+ok('goto refused while handed off', e && e.name === 'HandedOffError', e ? e.name : 'no error');
+e = await err(() => p.snapshot());
+ok('snapshot refused while handed off', e && e.name === 'HandedOffError', e ? e.name : 'no error');
+e = await err(() => p.click('text=問候'));
+ok('click refused while handed off', e && e.name === 'HandedOffError', e ? e.name : 'no error');
+ok('url still readable', (await p.url()).startsWith('http://127.0.0.1:8899/'));
+const again = await taskSpace(t.spaceId);
+e = await err(() => again.page('p1').goto('http://127.0.0.1:8899/?y'));
+ok('re-opening the space does not steal control', e && e.name === 'HandedOffError', e ? e.name : 'no error');
+const t0 = Date.now();
+e = await err(() => t.waitForControl({ timeout: 1500 }));
+ok('waitForControl waits then times out', e && e.name === 'TimeoutError' && Date.now() - t0 >= 1400, `${Date.now() - t0}ms`);
+const w = t.waitForControl({ timeout: 10000 });
+setTimeout(() => { t.takeOver().catch(() => {}); }, 1000);
+const t1 = Date.now();
+const r = await w;
+ok('waitForControl resolves after control returns', r.control === true && Date.now() - t1 >= 800, `${Date.now() - t1}ms`);
+await p.goto('http://127.0.0.1:8899/?z', { waitUntil: 'load' });
+ok('goto works again after takeOver', (await p.url()).includes('?z'));
+await t.finish();

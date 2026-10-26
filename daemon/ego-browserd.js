@@ -226,7 +226,8 @@ function broadcastPush(targetId, kind, payload) {
     if (hub) hub.resetSiteAuth(targetId).catch(() => {});
   }
   if (kind === 'coride' && payload?.mode) {
-    const found = store.findByTargetId(targetId);
+    let found = null;
+    try { found = store.findByTargetId(targetId); } catch {}
     if (found) {
       found.space.ownership = payload.mode === 'human' ? 'user' : 'agent';
       found.space.state = payload.mode === 'human' ? 'handed-off' : 'active';
@@ -382,7 +383,8 @@ async function dispatch(method, p) {
       requireHub();
       const sp = resolveSpace(p.idOrName);
       await syncSpaceTargets(sp.id);
-      sp.state = 'active'; store.persist();
+      // RG-A4: re-opening a space must not silently take it back from a human.
+      if (sp.state !== 'handed-off') { sp.state = 'active'; store.persist(); }
       return spaceView(sp.id);
     }
     case 'space.claim':
@@ -391,15 +393,26 @@ async function dispatch(method, p) {
       const sp = store.get(p.id);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
       await syncSpaceTargets(sp.id);
-      sp.state = 'active'; store.persist();
+      sp.state = 'active'; sp.ownership = 'agent'; store.persist();
       return spaceView(sp.id);
     }
     case 'space.handOff': {
       const sp = store.get(p.id);
-      if (sp) { sp.state = 'handed-off'; store.persist(); }
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      sp.state = 'handed-off'; sp.ownership = 'user'; store.persist();
       return { handedOff: true };
     }
-    case 'space.waitForControl': return { control: true };
+    case 'space.waitForControl': {
+      // RG-A4: really wait while a human holds the space. One RPC waits at most 25 s;
+      // the SDK loops so long waits never hit HTTP timeouts.
+      const sp = store.get(p.id);
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      const slice = Math.max(0, Math.min(Number(p.timeout ?? 25000) || 0, 25000));
+      const deadline = Date.now() + slice;
+      while (store.get(p.id)?.state === 'handed-off' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+      const cur = store.get(p.id);
+      return { control: !!cur && cur.state !== 'handed-off', state: cur?.state ?? 'deleted' };
+    }
     case 'space.finish': {
       const h = requireHub();
       const sp = store.get(p.id);
@@ -526,6 +539,7 @@ function spaceView(spaceId) {
   return { id: sp.id, name: sp.name, ownership: sp.ownership, state: sp.state, pages };
 }
 
+const HANDOFF_ALLOWED = new Set(['url', 'title', 'info', 'events', 'noop']);
 async function pageCall(p) {
   const h = requireHub();
   const sp = store.get(p.spaceId);
@@ -533,6 +547,11 @@ async function pageCall(p) {
   const pg = sp.pages[p.label];
   if (!pg) throw new EgoError('UnknownPage', `no page ${p.label} in space ${p.spaceId}`);
   if (!pg.targetId || !h.sessions.has(pg.targetId)) throw new EgoError('PageClosedError', `page ${p.label} is closed`);
+  // RG-A4: while a human holds the space (handOff or capsule "human" mode) the agent may only
+  // read tab metadata; anything that drives or reads page content is refused until control returns.
+  if (sp.state === 'handed-off' && !HANDOFF_ALLOWED.has(p.method)) {
+    throw new EgoError('HandedOffError', `space ${sp.id} is held by a human; call waitForControl() first (blocked: page.${p.method})`);
+  }
   const tid = pg.targetId;
   const [method, ...args] = [p.method, ...(p.args || [])];
   sp.activeTargetId = tid;

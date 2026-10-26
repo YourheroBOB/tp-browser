@@ -41,6 +41,8 @@ cp "$SRC/tools/"*.js "$APP_DIR/tools/" 2>/dev/null || true
 cp "$SRC/tests/"*.mjs "$APP_DIR/tests/" 2>/dev/null || true
 cp "$SRC/docs/"* "$APP_DIR/docs/" 2>/dev/null || true
 [ -f "$SRC/skills/tp-browser/SKILL.md" ] && cp "$SRC/skills/tp-browser/SKILL.md" "$APP_DIR/skills/tp-browser/SKILL.md"
+# RG-A9b: the short SKILL.md links to references/*.md; install them too.
+if [ -d "$SRC/skills/tp-browser/references" ]; then mkdir -p "$APP_DIR/skills/tp-browser/references" && cp "$SRC/skills/tp-browser/references/"*.md "$APP_DIR/skills/tp-browser/references/"; fi
 [ -f "$SRC/package.json" ] && cp "$SRC/package.json" "$APP_DIR/"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$APP_DIR/"
 [ -f "$SRC/NOTICE" ] && cp "$SRC/NOTICE" "$APP_DIR/"
@@ -90,6 +92,9 @@ if [ -f "$APP_DIR/skills/tp-browser/SKILL.md" ]; then
     for skill_name in tp-browser ego-browser; do
       mkdir -p "$skill_root/$skill_name" 2>/dev/null || true
       cp -f "$APP_DIR/skills/tp-browser/SKILL.md" "$skill_root/$skill_name/SKILL.md" 2>/dev/null || true
+      if [ -d "$APP_DIR/skills/tp-browser/references" ]; then
+        mkdir -p "$skill_root/$skill_name/references" 2>/dev/null && cp -f "$APP_DIR/skills/tp-browser/references/"*.md "$skill_root/$skill_name/references/" 2>/dev/null || true
+      fi
     done
   done
 fi

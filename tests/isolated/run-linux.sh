@@ -31,4 +31,9 @@ for s in "$REPO"/tests/smoke.ego.js "$REPO"/tests/isolated/*.ego.js; do
   echo "=== $(basename "$s")"
   node "$REPO/bin/ego-browser.js" nodejs < "$s" || RC=1
 done
+# RG-A6 positive path, last because it closes the browser: authenticated flush via stdin header.
+code=$(printf 'x-tp-token: %s\n' "$(cat "$T/.local/share/ego-linux/token")" | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H @- "http://127.0.0.1:$DP/flush-and-close" || true)
+sleep 1.5
+if [ "$code" = 200 ] && ! curl -fsS -m 1 "http://127.0.0.1:$CP/json/version" >/dev/null 2>&1; then echo "PASS A6 token flush -> 200 and browser closed"; else echo "FAIL A6 token flush (http=$code)"; RC=1; fi
+echo "ISO_RC=$RC"
 exit $RC

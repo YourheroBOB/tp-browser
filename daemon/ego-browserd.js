@@ -327,6 +327,8 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length, dataDir: DATA_DIR, port: PORT, cdpPort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: STARTED_AT, chromeIdentity: chromeReady ? chromeIdentity : null })); return; }
   if (url.pathname === '/flush-and-close') {
+    // RG-A6: closing the whole browser needs the same token as /rpc (any local process can reach 127.0.0.1).
+    if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
     await handleFlushAndClose(hub, res);
     return;
   }

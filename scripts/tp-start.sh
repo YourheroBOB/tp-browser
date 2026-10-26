@@ -75,7 +75,11 @@ if [ "$RESTART" -eq 0 ]; then
 fi
 
 # Flush active cookies & storage and gracefully close Chrome via CDP before stopping
-curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
+tp_flush_close() {  # RG-A6: authenticated flush; token is piped via stdin, never on argv
+  [ -r "$DATA_DIR/token" ] || return 0
+  printf 'x-tp-token: %s\n' "$(cat "$DATA_DIR/token")" | curl -fsS --max-time 3 -H @- "http://127.0.0.1:$1/flush-and-close" >/dev/null 2>&1 || true
+}
+tp_flush_close "$DAEMON_PORT"
 sleep 1.0
 
 # Stop existing TP Browser processes for this profile/daemon

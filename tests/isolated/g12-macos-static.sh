@@ -152,7 +152,7 @@ cleanup() {
   done
 }
 trap cleanup EXIT INT TERM
-sleep 0.4
+sleep 1
 PROFILE_DIR="$P"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/tp-ps.sh"
@@ -164,7 +164,7 @@ case " $got " in *" $DECOY "*) bad "decoy with daemon name matched" ;; *) ok "de
 case " $got " in *" $HELP "*) ok "helper with exact flag listed" ;; *) bad "helper missed" ;; esac
 if tp_profile_is_headed; then bad "headless main counted as headed"; else ok "headless main is not headed"; fi
 node -e 'setTimeout(()=>{},60000)' -- --user-data-dir="$P" --window-size=1440,900 >/dev/null 2>&1 & HEAD=$!
-sleep 0.3
+sleep 1
 if tp_profile_is_headed; then ok "headed main detected"; else bad "headed main not detected"; fi
 
 echo "G12_RC=$fail"

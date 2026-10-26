@@ -22,5 +22,5 @@ run >/dev/null 2>&1
 [ "$(stat -c %a "$T/h/.zprofile" 2>/dev/null || stat -f %Lp "$T/h/.zprofile")" = "640" ] && ok "mode 0640 kept" || bad "mode 0640 kept"
 grep -q '\[ -x /usr/local/bin/tp-start \] && \[ "$(readlink /usr/local/bin/tp-start' "$REPO/install.sh" && ok "install requires executable link target" || bad "install requires executable link target"
 rm -rf "$T"
-grep -q 'ls -ld "$ZPROF" | cut -c3' "$REPO/uninstall.sh" && ok "read-only check uses mode bit (works as root)" || bad "read-only check uses mode bit (works as root)"
+grep -q 'ls -ldL "$ZPROF" | cut -c3' "$REPO/uninstall.sh" && ok "read-only check uses mode bit (works as root)" || bad "read-only check uses mode bit (works as root)"
 echo "A12Z_RC=$RC"; exit $RC

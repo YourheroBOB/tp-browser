@@ -612,6 +612,8 @@ export class BrowserHub {
     // ONLY override User-Agent when running in HeadlessChrome mode!
     // In headed mode, the real Chrome/Edge binary already has 100% authentic UA + Client Hints,
     // and overriding them via CDP breaks hCaptcha/Cloudflare/OAuth client attestation!
+    // RG-A13b: explicit headless flag; never rejects, so screenshot never fails because of it.
+    this._headlessPromise = cdp.send('Browser.getVersion').then((v) => /Headless/i.test(v?.userAgent || '')).catch(() => false);
     this._cleanUaPromise = cdp.send('Browser.getVersion').then((v) => {
       const rawUa = v?.userAgent || '';
       if (!/Headless/i.test(rawUa)) return null;
@@ -1109,8 +1111,14 @@ export class BrowserHub {
     // fromSurface:false and setDefaultBackgroundColorOverride do not unblock it.
     // Activating the tab does. Headless has no HWND, so this does not steal a
     // person's visible window. Never do it when the browser is headed.
-    if (await this._cleanUaPromise) {
-      await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId, timeout: 5000 }).catch(() => {});
+    // RG-A13b: gate on the explicit headless flag, not the UA-cleanup result. visibilityState cannot narrow
+    // this down: the stuck tab still reports 'visible'. Not cached per tab: a popup can take front in between.
+    if (this._headlessPromise && (await this._headlessPromise)) {
+      try {
+        await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId, timeout: 5000 });
+      } catch (e) {
+        console.warn('[tp] screenshot: Page.bringToFront failed (' + (e && e.message) + '); capturing anyway');
+      }
     }
     const res = await this.cdp.send('Page.captureScreenshot', params, { sessionId: st.sessionId, timeout: 60000 });
     return res.data; // base64

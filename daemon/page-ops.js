@@ -285,17 +285,21 @@ export class BrowserHub {
     } catch {}
   }
 
-  _persistCookieVault() {
+  _persistCookieVault({ throwOnError = false } = {}) {
     try {
       const cookies = [...this.cookieVault.values()];
       writeFileSync(COOKIES_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), cookies }), { mode: 0o600 });
-    } catch {}
+    } catch (error) {
+      if (throwOnError) throw error;
+    }
   }
 
-  _persistStorageVault() {
+  _persistStorageVault({ throwOnError = false } = {}) {
     try {
       writeFileSync(STORAGE_VAULT_PATH, JSON.stringify(this.storageVault), { mode: 0o600 });
-    } catch {}
+    } catch (error) {
+      if (throwOnError) throw error;
+    }
   }
 
   _buildStoragePreloadScript() {
@@ -372,57 +376,75 @@ export class BrowserHub {
     } catch {}
   }
 
-  async syncVaultNow() {
-    if (this._syncingVault) return;
-    this._syncingVault = true;
+  async syncVaultNow({ flush = false } = {}) {
+    // Wait for an in-flight sweep, then take a fresh snapshot for shutdown.
+    if (this._syncingVault && !flush) return;
+    while (this._syncingVault) {
+      try { await this._syncingVault; } catch {}
+    }
+    this._syncingVault = this._syncVaultNow({ flush });
     try {
-      const { cookies } = await this.cdp.send('Storage.getCookies', {});
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        const now = Math.floor(Date.now() / 1000);
-        const toPromote = [];
-        let changed = false;
-        for (const c of cookies) {
-          if (!c || !c.name || !c.domain) continue;
-          const isSession = !c.expires || c.expires <= 0 || c.session;
-          if (isSession) {
-            c.expires = now + 30 * 86400;
-            c.session = false;
-            const p = toCookieParam(c);
-            if (p) toPromote.push(p);
-            changed = true;
-          }
-          const key = cookieKey(c);
-          const prev = this.cookieVault.get(key);
-          if (!prev || prev.value !== c.value || Math.abs((prev.expires || 0) - (c.expires || 0)) > 60) {
-            this.cookieVault.set(key, c);
-            changed = true;
-          }
+      await this._syncingVault;
+    } catch (error) {
+      if (flush) throw error;
+    } finally {
+      this._syncingVault = null;
+    }
+  }
+
+  async _syncVaultNow({ flush }) {
+    const { cookies } = await this.cdp.send('Storage.getCookies', {});
+    if (!Array.isArray(cookies)) throw new Error('Invalid Storage.getCookies response');
+    let changed = false;
+    if (cookies.length > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const toPromote = [];
+      for (const c of cookies) {
+        if (!c || !c.name || !c.domain) continue;
+        const isSession = !c.expires || c.expires <= 0 || c.session;
+        if (isSession) {
+          c.expires = now + 30 * 86400;
+          c.session = false;
+          const p = toCookieParam(c);
+          if (p) toPromote.push(p);
+          changed = true;
         }
-        if (toPromote.length > 0) {
-          await this.cdp.send('Storage.setCookies', { cookies: toPromote }).catch(() => {});
-        }
-        if (changed) {
-          this._persistCookieVault();
-        }
-      }
-      // Also record open user https:// tabs (excluding login/oauth interstitials)
-      const openUrls = [];
-      const seen = new Set();
-      for (const [, st] of this.sessions) {
-        if (st.isPopup) continue;
-        const u = String(st.url || '');
-        if (!u.startsWith('https://')) continue;
-        if (/login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com|\/oauth|\/signin|\/login/i.test(u)) continue;
-        if (!seen.has(u)) {
-          seen.add(u);
-          openUrls.push({ url: u, title: st.title || '' });
+        const key = cookieKey(c);
+        const prev = this.cookieVault.get(key);
+        if (!prev || prev.value !== c.value || Math.abs((prev.expires || 0) - (c.expires || 0)) > 60) {
+          this.cookieVault.set(key, c);
+          changed = true;
         }
       }
-      if (openUrls.length > 0) {
-        writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
+      if (toPromote.length > 0) {
+        await this.cdp.send('Storage.setCookies', { cookies: toPromote }).catch((error) => {
+          if (flush) throw error;
+        });
       }
-    } catch {} finally {
-      this._syncingVault = false;
+    }
+    // A shutdown flush retries disk writes even for unchanged in-memory values.
+    // Periodic sweeps retain their existing write frequency and disk formats.
+    if (changed || flush) {
+      this._persistCookieVault({ throwOnError: flush });
+    }
+    if (flush) {
+      this._persistStorageVault({ throwOnError: true });
+    }
+    // Also record open user https:// tabs (excluding login/oauth interstitials)
+    const openUrls = [];
+    const seen = new Set();
+    for (const [, st] of this.sessions) {
+      if (st.isPopup) continue;
+      const u = String(st.url || '');
+      if (!u.startsWith('https://')) continue;
+      if (/login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com|\/oauth|\/signin|\/login/i.test(u)) continue;
+      if (!seen.has(u)) {
+        seen.add(u);
+        openUrls.push({ url: u, title: st.title || '' });
+      }
+    }
+    if (openUrls.length > 0) {
+      writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
     }
   }
 
@@ -794,7 +816,9 @@ export class BrowserHub {
     const st = this.sessionOf(targetId);
     st.agentNavigating = true;
     if (st._newtabRedirectTimer) { clearTimeout(st._newtabRedirectTimer); st._newtabRedirectTimer = null; }
-    if (bringToFront || /login\.microsoftonline\.com|devicelogin|login\.live\.com|accounts\.google\.com|oauth2\/|signin/i.test(String(url || ''))) {
+    // Only the big identity providers pull the window forward for a human login; any other page
+    // opens without taking the user's focus (pass bringToFront when a human must act).
+    if (bringToFront || /^https:\/\/(login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com)\/|^https:\/\/(www\.)?microsoft\.com\/devicelogin/i.test(String(url || ''))) {
       await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId }).catch(() => {});
     }
     if (!st.uaCleaned && this._cleanUaPromise) {

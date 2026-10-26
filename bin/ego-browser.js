@@ -58,29 +58,21 @@ function readToken() {
   if (!existsSync(TOKEN_FILE)) throw new Error(`no token at ${TOKEN_FILE}; is tp-browserd running?`);
   return readFileSync(TOKEN_FILE, 'utf8').trim();
 }
+// FIX-1151022: ports come from EGO_BROWSERD_PORT / EGO_CHROME_PORT, else daemon.json, else 9772/9773
+// (previously only 9774/9775 were honoured and everything else collapsed to 9772/9773).
+function validPort(v) { const n = Number(v); return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null; }
+function readDaemonJson() { try { return existsSync(DAEMON_JSON) ? JSON.parse(readFileSync(DAEMON_JSON, 'utf8')) : {}; } catch { return {}; } }
 function readPort() {
-  if (existsSync(DAEMON_JSON)) {
-    try {
-      const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port;
-      if (p === 9774) return 9774;
-    } catch {}
-  }
-  return 9772;
+  return validPort(process.env.EGO_BROWSERD_PORT) ?? validPort(readDaemonJson().port) ?? 9772;
 }
 function readChromePort() {
-  if (existsSync(DAEMON_JSON)) {
-    try {
-      const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).chromePort;
-      if (p === 9775) return 9775;
-    } catch {}
-  }
-  return 9773;
+  return validPort(process.env.EGO_CHROME_PORT) ?? validPort(readDaemonJson().chromePort) ?? 9773;
 }
 function daemonBase(port) {
-  return port === 9774 ? 'http://127.0.0.1:9774' : 'http://127.0.0.1:9772';
+  return `http://127.0.0.1:${validPort(port) ?? 9772}`;
 }
 function chromeVersionUrl(chromePort) {
-  return chromePort === 9775 ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
+  return `http://127.0.0.1:${validPort(chromePort) ?? 9773}/json/version`;
 }
 
 async function health(port) {

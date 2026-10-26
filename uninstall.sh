@@ -219,20 +219,21 @@ done < "$PLAN"
 # RG-A12g: drop only the one marked line install.sh appended to ~/.zprofile on macOS.
 ZPROF="$HOME/.zprofile"
 if [ -f "$ZPROF" ] && grep -qF '# tp-browser PATH' "$ZPROF"; then
-  # RG-A12g2: temp file next to the original (same mode via cp -p), every step checked, atomic mv; a symlinked
+  # RG-A12g2/g3: temp file next to the original (mode via cp -p plus u+w so a read-only file still works; the PLAN cleanup trap is kept), every step checked, atomic mv; a symlinked
   # ~/.zprofile is left untouched with a note. grep -v exit 1 just means no other lines remain.
   if [ -L "$ZPROF" ]; then
     printf '%s\n' "~/.zprofile is a symlink; remove the '# tp-browser PATH' line by hand"
   elif _z="$(mktemp "$ZPROF.tp.XXXXXX" 2>/dev/null)" && [ -n "$_z" ]; then
-    trap 'rm -f "$_z"' EXIT INT TERM
+    trap 'rm -f "$_z"; cleanup' EXIT
+    trap 'rm -f "$_z"; cleanup; exit 130' INT TERM
     _grc=0
-    { cp -p "$ZPROF" "$_z" && { grep -vF '# tp-browser PATH' "$ZPROF" > "$_z" || _grc=$?; }; } || _grc=2
+    { cp -p "$ZPROF" "$_z" && chmod u+w "$_z" && { grep -vF '# tp-browser PATH' "$ZPROF" > "$_z" || _grc=$?; }; } || _grc=2
     if [ "$_grc" -le 1 ] && mv -f "$_z" "$ZPROF"; then
       printf '%s\n' "Removed the tp-browser PATH line from ~/.zprofile"
     else
       rm -f "$_z"; printf '%s\n' "Could not rewrite ~/.zprofile; it is unchanged. Remove the '# tp-browser PATH' line by hand." >&2
     fi
-    trap - EXIT INT TERM
+    trap cleanup EXIT; trap - INT TERM
   else
     printf '%s\n' "Could not create a temp file next to ~/.zprofile; it is unchanged." >&2
   fi

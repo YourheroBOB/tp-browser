@@ -1,7 +1,7 @@
 #!/bin/sh
 # Isolated end-to-end run: throwaway HOME + fresh Chromium profile on private ports.
 # Never touches the user's main TP instance (9772/9773) or any other running browser.
-# Usage: sh tests/isolated/run-linux.sh [daemonPort] [chromePort]   (defaults 9796 9797)
+# Usage: sh tests/isolated/run-linux.sh [daemonPort] [chromePort] [fixturePort]   (defaults 9796 9797 8899)
 set -eu
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DP="${1:-9796}"; CP="${2:-9797}"; FXP="${3:-${TP_FIXTURE_PORT:-8899}}"; export TP_FIXTURE_PORT="$FXP"
@@ -9,7 +9,11 @@ T="$(mktemp -d /tmp/tp-iso-XXXXXX)"
 CHROME="${TP_CHROME:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
 cleanup() {
   for p in ${SRV:-} ${DMN:-} ${CHR:-}; do kill "$p" 2>/dev/null || true; done
-  sleep 1; for p in ${CHR:-}; do kill -9 "$p" 2>/dev/null || true; done
+  # RG-A5b: only SIGKILL the Chrome PID if it is still OUR Chrome (cmdline has our temp profile); avoids PID reuse.
+  sleep 1; for p in ${CHR:-}; do
+    if [ -r "/proc/$p/cmdline" ] && tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qF "$T/"; then kill -9 "$p" 2>/dev/null || true
+    elif [ ! -d /proc ] && ps -p "$p" -o command= 2>/dev/null | grep -qF "$T/"; then kill -9 "$p" 2>/dev/null || true; fi
+  done
   rm -rf "$T"
 }
 trap cleanup EXIT INT TERM
@@ -42,6 +46,6 @@ sleep 1.5
 if [ "$code" = 200 ] && ! curl -fsS -m 1 "http://127.0.0.1:$CP/json/version" >/dev/null 2>&1; then echo "PASS A6 token flush -> 200 and browser closed"; else echo "FAIL A6 token flush (http=$code)"; RC=1; fi
 vf=$(ls "$VD"/cookies-vault.json "$VD"/storage-vault.json "$VD"/session-tabs.json 2>/dev/null | wc -l)
 if [ "${TP_SESSION_VAULT:-}" = 1 ]; then [ "$vf" -ge 1 ] && echo "PASS A2 vault enabled -> $vf vault file(s)" || { echo "FAIL A2 vault enabled but no files"; RC=1; }
-else [ "$vf" = 0 ] && echo "PASS A2 default: no vault files written" || { echo "FAIL A2 default wrote $vf vault file(s)"; RC=1; }; fi
+else [ "$vf" -eq 0 ] && echo "PASS A2 default: no vault files written" || { echo "FAIL A2 default wrote $vf vault file(s)"; RC=1; }; fi
 echo "ISO_RC=$RC"
 exit $RC

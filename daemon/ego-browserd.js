@@ -480,6 +480,12 @@ async function dispatch(method, p) {
     case 'download.call': return downloadCall(p);
     case 'task.cdp': {
       const h = requireHub();
+      // RG-A4b: raw browser-level CDP from a TaskSpace is refused while a human holds that space,
+      // otherwise handOff could be bypassed (Target.attachToTarget + Input.* / Runtime.evaluate).
+      if (p.spaceId != null) {
+        const sp = store.get(p.spaceId);
+        if (sp && sp.state === 'handed-off') throw new EgoError('HandedOffError', `space ${sp.id} is held by a human; call waitForControl() first (blocked: cdp ${p.method})`);
+      }
       return h.cdp.send(p.method, p.params || {}, { timeout: p.timeout || 30000 });
     }
     case 'page.call': return pageCall(p);

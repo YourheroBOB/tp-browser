@@ -183,16 +183,19 @@ function Test-BinEmptyAfterPlan([string]$dir) {
 }
 $EnvKey = $null
 try { $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) } catch { $EnvKey = $null }
-# Legacy installs (before path-added.txt) have no marker: fall back to the two TP bins, still guarded by the empty-dir check.
-$Legacy = -not (Test-Path -LiteralPath $Marker)
-if ($Legacy) { $OursAdded = @($LocalBin.TrimEnd('\'), $HomeBin.TrimEnd('\')) }
+# RG-A10d: no marker (older install, manual or portable copy) means no proof TP added the entry: keep it and say so.
+$PathKept = @()
+if (-not (Test-Path -LiteralPath $Marker)) {
+    foreach ($b in @($LocalBin, $HomeBin)) { $PathKept += $b }
+}
 if ($EnvKey -and $OursAdded.Count -gt 0) {
     $UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
     try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
     $keep = @()
     foreach ($part in ($UserPath -split ";" | Where-Object { $_ -ne "" })) {
-        $trim = [Environment]::ExpandEnvironmentVariables($part).TrimEnd('\')
+        # Raw comparison only: install.ps1 writes literal paths, so a %VAR% entry was written by someone else.
+        $trim = $part.TrimEnd('\')
         $isOurs = ($OursAdded -icontains $trim) -and (($trim -ieq $LocalBin.TrimEnd('\')) -or ($trim -ieq $HomeBin.TrimEnd('\'))) -and (Test-BinEmptyAfterPlan $trim)
         if ($isOurs) { $PathNotes += $part } else { $keep += $part }
     }
@@ -225,5 +228,8 @@ if ($Purge) {
 }
 if ($PathNotes.Count -gt 0) {
     Write-Output ("Removed User PATH entries: " + ($PathNotes -join "; "))
+}
+if ($PathKept.Count -gt 0) {
+    Write-Output ("No path-added.txt record, so User PATH was left as is. If TP added them, remove by hand: " + ($PathKept -join "; "))
 }
 exit 0

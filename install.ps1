@@ -139,13 +139,13 @@ if ($Added.Count -gt 0) {
     $env:Path = "$LocalBin;$HomeBin;$env:Path"
     Send-TpEnvBroadcast
 }
-# Record the bins TP manages (newly added or already present) so uninstall can clean them up; uninstall still
-# keeps an entry whose directory would hold anything but TP wrappers.
-if ($Managed.Count -gt 0) {
+# RG-A10d: record only the entries this installer actually appended; entries that were already on PATH
+# (raw or via %VAR%) belong to the user and uninstall never removes them.
+if ($Added.Count -gt 0) {
     $Marker = Join-Path $DataDir "path-added.txt"
     $prevAdded = @()
     if (Test-Path -LiteralPath $Marker) { $prevAdded = @(Get-Content -LiteralPath $Marker) }
-    Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Managed) | Select-Object -Unique) -Encoding UTF8
+    Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Added) | Select-Object -Unique) -Encoding UTF8
 }
 $EnvKey.Close()
 

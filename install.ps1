@@ -106,21 +106,30 @@ foreach ($dir in @($LocalBin, $HomeBin)) {
     Set-Content -Path (Join-Path $dir "tp-stop.cmd") -Value $StopCmd -Encoding Ascii
 }
 
-# Ensure ~/.local/bin and ~/bin are in User PATH
-$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (-not $UserPath) { $UserPath = "" }
-$PathParts = $UserPath -split ";" | Where-Object { $_ -ne "" }
-$Modified = $false
+# Ensure ~/.local/bin and ~/bin are in User PATH.
+# RG-A10b: read/write the raw registry value so REG_EXPAND_SZ entries such as %JAVA_HOME%\bin stay unexpanded,
+# and record exactly which entries TP added so uninstall.ps1 removes only those.
+$EnvKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+$UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
+$PathParts = @($UserPath -split ";" | Where-Object { $_ -ne "" })
+$Added = @()
 foreach ($b in @($LocalBin, $HomeBin)) {
-    if ($PathParts -notcontains $b) {
+    if (-not ($PathParts | Where-Object { $_.TrimEnd('\') -ieq $b.TrimEnd('\') })) {
         $PathParts += $b
-        $Modified = $true
+        $Added += $b
     }
 }
-if ($Modified) {
-    [Environment]::SetEnvironmentVariable("Path", ($PathParts -join ";"), "User")
+if ($Added.Count -gt 0) {
+    $EnvKey.SetValue("Path", ($PathParts -join ";"), $PathKind)
     $env:Path = "$LocalBin;$HomeBin;$env:Path"
+    $Marker = Join-Path $DataDir "path-added.txt"
+    $prevAdded = @()
+    if (Test-Path -LiteralPath $Marker) { $prevAdded = @(Get-Content -LiteralPath $Marker) }
+    Set-Content -LiteralPath $Marker -Value (@($prevAdded + $Added) | Select-Object -Unique) -Encoding UTF8
 }
+$EnvKey.Close()
 
 # Install Startup VBS launcher so TP Browser auto-starts hidden on Windows logon
 $StartupDir = [Environment]::GetFolderPath("Startup")

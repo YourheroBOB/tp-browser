@@ -159,19 +159,36 @@ if (Test-Path -LiteralPath $Stop) {
 }
 
 $PathNotes = @()
-$UserPath = ""
-try { $UserPath = [Environment]::GetEnvironmentVariable("Path", "User") } catch { $UserPath = "" }
-if ($UserPath) {
+# RG-A10b: only remove PATH entries install.ps1 recorded in path-added.txt, only when that bin dir will hold
+# nothing but TP wrappers, and keep the raw REG_EXPAND_SZ value so other entries stay unexpanded.
+$Marker = Join-Path $DataDir "path-added.txt"
+$OursAdded = @()
+if (Test-Path -LiteralPath $Marker) { $OursAdded = @(Get-Content -LiteralPath $Marker | Where-Object { $_ -ne "" } | ForEach-Object { $_.TrimEnd('\') }) }
+function Test-BinEmptyAfterPlan([string]$dir) {
+    if (-not (Test-Path -LiteralPath $dir)) { return $true }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+        if (-not ($Plan -contains $f.FullName)) { return $false }
+    }
+    return $true
+}
+$EnvKey = $null
+try { $EnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) } catch { $EnvKey = $null }
+if ($EnvKey -and $OursAdded.Count -gt 0) {
+    $UserPath = [string]$EnvKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $PathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    try { $PathKind = $EnvKey.GetValueKind("Path") } catch { }
     $keep = @()
     foreach ($part in ($UserPath -split ";" | Where-Object { $_ -ne "" })) {
         $trim = $part.TrimEnd('\')
-        $isOurs = ($trim -ieq $LocalBin.TrimEnd('\')) -or ($trim -ieq $HomeBin.TrimEnd('\'))
+        $isOurs = ($OursAdded -icontains $trim) -and (($trim -ieq $LocalBin.TrimEnd('\')) -or ($trim -ieq $HomeBin.TrimEnd('\'))) -and (Test-BinEmptyAfterPlan $trim)
         if ($isOurs) { $PathNotes += $part } else { $keep += $part }
     }
     if ($PathNotes.Count -gt 0 -and -not $DryRun) {
-        [Environment]::SetEnvironmentVariable("Path", ($keep -join ";"), "User")
+        $EnvKey.SetValue("Path", ($keep -join ";"), $PathKind)
     }
 }
+if ($EnvKey) { $EnvKey.Close() }
+if ($PathNotes.Count -gt 0 -and (Test-Path -LiteralPath $Marker)) { Add-Plan $Marker }
 
 if ($DryRun) {
     foreach ($p in $Plan) { Write-Output "would remove: $p" }

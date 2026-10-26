@@ -13,6 +13,12 @@ const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const COOKIES_VAULT_PATH = join(DATA_DIR, 'cookies-vault.json');
 const STORAGE_VAULT_PATH = join(DATA_DIR, 'storage-vault.json');
 const TABS_VAULT_PATH = join(DATA_DIR, 'session-tabs.json');
+// RG-A2: the session vault (cookies/storage/open-tabs written to DATA_DIR) is OPT-IN.
+// Default: nothing is persisted outside Chromium's own profile and session cookies stay session cookies.
+// TP_SESSION_VAULT=1 enables the vault; TP_PROMOTE_SESSION_COOKIES=1 additionally promotes
+// session cookies to 30-day persistent cookies (previous default behaviour).
+export const VAULT_ENABLED = process.env.TP_SESSION_VAULT === '1';
+const PROMOTE_SESSION = VAULT_ENABLED && process.env.TP_PROMOTE_SESSION_COOKIES === '1';
 
 function cookieKey(c) {
   return `${c.name || ''}|${c.domain || ''}|${c.path || '/'}`;
@@ -27,8 +33,9 @@ function toCookieParam(c) {
   const path = isHostPrefix ? '/' : (c.path || '/');
   const url = (secure ? 'https://' : 'http://') + host + path;
   const now = Math.floor(Date.now() / 1000);
-  const expires = (!c.expires || c.expires <= 0 || c.session) ? (now + 30 * 86400) : c.expires;
-  if (expires <= now) return null;
+  const isSess = !c.expires || c.expires <= 0 || c.session;
+  const expires = isSess ? (PROMOTE_SESSION ? now + 30 * 86400 : undefined) : c.expires;
+  if (expires !== undefined && expires <= now) return null;
   const param = {
     name: c.name,
     value: c.value,
@@ -36,8 +43,8 @@ function toCookieParam(c) {
     path,
     secure,
     httpOnly: Boolean(c.httpOnly),
-    expires,
   };
+  if (expires !== undefined) param.expires = expires;
   if (!isHostPrefix && c.domain) {
     param.domain = c.domain;
   }
@@ -225,7 +232,8 @@ export class BrowserHub {
     this.popupsSeen = []; // {targetId, openerId, at}
     this.cookieVault = new Map(); // cookieKey -> cookie
     this.storageVault = {}; // origin -> { ls: [[k,v]], ss: [[k,v]], updatedAt }
-    this._loadVaultsFromDisk();
+    this.vaultEnabled = VAULT_ENABLED;
+    if (this.vaultEnabled) this._loadVaultsFromDisk();
     this._wire();
     this._sweepTick = 0;
     this._sweepTimer = setInterval(() => {
@@ -265,11 +273,12 @@ export class BrowserHub {
         const now = Math.floor(Date.now() / 1000);
         for (const c of list) {
           if (!c || !c.name || !c.domain) continue;
-          if (!c.expires || c.expires <= 0 || c.session) {
+          const isSess = !c.expires || c.expires <= 0 || c.session;
+          if (isSess && PROMOTE_SESSION) {
             c.expires = now + 30 * 86400;
             c.session = false;
           }
-          if (c.expires > now) {
+          if ((isSess && !PROMOTE_SESSION) || c.expires > now) {
             this.cookieVault.set(cookieKey(c), c);
           }
         }
@@ -329,6 +338,7 @@ export class BrowserHub {
   }
 
   _injectOriginStorageIfPresent(st) {
+    if (!this.vaultEnabled) return;
     try {
       if (!st || st.isPopup) return;
       const u = String(st.url || '');
@@ -364,6 +374,7 @@ export class BrowserHub {
   }
 
   async restoreVaultToBrowser() {
+    if (!this.vaultEnabled) return;
     try {
       const params = [];
       for (const c of this.cookieVault.values()) {
@@ -377,6 +388,7 @@ export class BrowserHub {
   }
 
   async syncVaultNow({ flush = false } = {}) {
+    if (!this.vaultEnabled) return;
     // Wait for an in-flight sweep, then take a fresh snapshot for shutdown.
     if (this._syncingVault && !flush) return;
     while (this._syncingVault) {
@@ -402,7 +414,7 @@ export class BrowserHub {
       for (const c of cookies) {
         if (!c || !c.name || !c.domain) continue;
         const isSession = !c.expires || c.expires <= 0 || c.session;
-        if (isSession) {
+        if (isSession && PROMOTE_SESSION) {
           c.expires = now + 30 * 86400;
           c.session = false;
           const p = toCookieParam(c);
@@ -449,6 +461,7 @@ export class BrowserHub {
   }
 
   getSavedTabs() {
+    if (!this.vaultEnabled) return [];
     try {
       if (existsSync(TABS_VAULT_PATH)) {
         const raw = JSON.parse(readFileSync(TABS_VAULT_PATH, 'utf8'));
@@ -459,6 +472,7 @@ export class BrowserHub {
   }
 
   _handleStorageSync(payload) {
+    if (!this.vaultEnabled) return;
     try {
       const origin = String(payload?.origin || '');
       if (!origin.startsWith('https://')) return;
@@ -667,7 +681,7 @@ export class BrowserHub {
         }).catch(() => {});
       }
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
-      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: this._buildStoragePreloadScript() }, opts).catch(() => {});
+      if (this.vaultEnabled) await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: this._buildStoragePreloadScript() }, opts).catch(() => {});
       await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
       if (isAlreadyLoaded) {
         this._ensureCoRideBar(st, true);

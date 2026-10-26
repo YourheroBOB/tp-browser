@@ -9,6 +9,7 @@ export async function flushAndClose(hub) {
     errors.push('hub_unavailable');
   } else {
     try {
+      // RG-A2: with the vault disabled (default) there is nothing to sync; that is not a failure.
       await hub.syncVaultNow({ flush: true });
       vaultSynced = true;
     } catch {
@@ -29,6 +30,7 @@ export async function flushAndClose(hub) {
     vault_synced: vaultSynced,
     browser_close_sent: browserCloseSent,
     flushed: vaultSynced,
+    vault: hub && hub.vaultEnabled === false ? 'disabled' : 'enabled',
     errors,
   };
 }

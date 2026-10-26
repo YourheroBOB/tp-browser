@@ -31,9 +31,17 @@ for s in "$REPO"/tests/smoke.ego.js "$REPO"/tests/isolated/*.ego.js; do
   echo "=== $(basename "$s")"
   node "$REPO/bin/ego-browser.js" nodejs < "$s" || RC=1
 done
+# RG-A2: session cookie must stay a session cookie and no vault files unless TP_SESSION_VAULT=1.
+kind=$(node --experimental-websocket "$REPO/tests/isolated/cdp-cookie.mjs" "$CP" tp_a2_sess 2>/dev/null || echo error)
+want=session; [ "${TP_PROMOTE_SESSION_COOKIES:-}" = 1 ] && [ "${TP_SESSION_VAULT:-}" = 1 ] && want=persistent
+if [ "$kind" = "$want" ]; then echo "PASS A2 fixture cookie is $kind"; else echo "FAIL A2 fixture cookie is $kind (want $want)"; RC=1; fi
+VD="$T/.local/share/ego-linux"
 # RG-A6 positive path, last because it closes the browser: authenticated flush via stdin header.
 code=$(printf 'x-tp-token: %s\n' "$(cat "$T/.local/share/ego-linux/token")" | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H @- "http://127.0.0.1:$DP/flush-and-close" || true)
 sleep 1.5
 if [ "$code" = 200 ] && ! curl -fsS -m 1 "http://127.0.0.1:$CP/json/version" >/dev/null 2>&1; then echo "PASS A6 token flush -> 200 and browser closed"; else echo "FAIL A6 token flush (http=$code)"; RC=1; fi
+vf=$(ls "$VD"/cookies-vault.json "$VD"/storage-vault.json "$VD"/session-tabs.json 2>/dev/null | wc -l)
+if [ "${TP_SESSION_VAULT:-}" = 1 ]; then [ "$vf" -ge 1 ] && echo "PASS A2 vault enabled -> $vf vault file(s)" || { echo "FAIL A2 vault enabled but no files"; RC=1; }
+else [ "$vf" = 0 ] && echo "PASS A2 default: no vault files written" || { echo "FAIL A2 default wrote $vf vault file(s)"; RC=1; }; fi
 echo "ISO_RC=$RC"
 exit $RC

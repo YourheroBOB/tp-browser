@@ -14,7 +14,7 @@
 | 4 | 上線 Phase 0 CI（lint + `node --test` + gitleaks + npm audit） | 高 | 1 pd | 低 | repo 設定權限（需 BOB 操作） |
 | 5 | `Store.load()` 形狀驗證與預設值 merge | 中高 | 0.5 pd | 低 | 需同步改寫既有「現況測試」 |
 | 6 | `Store` 新增 `lastUsedAt` 並供 reaper 使用 | 中高 | 1 pd | 低 | schema 變更需向後相容 |
-| 7 | 結構化日誌＋紅機制（observability Phase 1） | 中高 | 2–3 pd | 中 | 日誌量大與敏感欄位洩漏防護 |
+| 7 | 結構化日誌＋脫敏（redaction）機制（observability Phase 1） | 中高 | 2–3 pd | 中 | 日誌量大與敏感欄位洩漏防護 |
 | 8 | `smoke.ego.js` 去除 `/tmp` 硬編路徑＋跨平台化 | 中 | 0.5 pd | 低 | 改動驗收基準腳本本身 |
 | 9 | 瀏覽器支援矩陣正式化（Edge／Brave／macOS 驗收） | 中 | 3–5 pd（多為驗證） | 中 | 瀏覽器版本差異與 anti-bot 行為 |
 | 10 | `/metrics` 端點＋基礎儀表板（observability Phase 2） | 中 | 2–4 pd | 中 | 零相依下自製 Prometheus text format 的維護成本 |
@@ -58,16 +58,16 @@
 - **內容**：在 `setPage`／`bindPage`／`addPage` 等寫入點更新 `lastUsedAt`；reaper 的閒置基準改為 `lastUsedAt ?? createdAt`。schema 屬**加欄位**，舊 ledger 載入後為 `undefined`，回退 `createdAt`，向後相容。
 - **風險**：低；需擴充 `fmb_feature2/reaper.test.js`。
 
-### 7. 結構化日誌＋紅機制（Phase 1）
+### 7. 結構化日誌＋脫敏（redaction）機制（Phase 1）
 
 - **現況**：僅無時間戳、無層級的 `console.*`，重定向到 `logs/daemon.log`／`chrome.log`；無任何敏感欄位防護。
 - **內容**：依 `docs/fmb-observability/events-and-fields.md` 與 `sensitive-fields.md` 實作——允許清單欄位、JSON lines、本地優先（不外傳）、零相依。
-- **風險**：中——主要是「不小心把頁面 URL／title（可能含案件線索）寫進日誌」的隱私風險，因此紅機制必須與日誌同批上線，不可先上日誌後補防護。
+- **風險**：中——主要是「不小心把頁面 URL／title（可能含案件線索）寫進日誌」的隱私風險，因此脫敏（redaction）機制必須與日誌同批上線，不可先上日誌後補防護。
 
 ### 8. 冒煙腳本跨平台化
 
 - **現況**：`tests/smoke.ego.js` 硬編 `/tmp/ego-linux-smoke.png` 與 `/tmp/ego-linux-smoke-dl.txt`，且依賴 POSIX `/tmp` 與 `ps ax`（`tp-start.sh` 亦然）。
-- **內容**：改為 env 或參數傳入輸出目錄（預設 `os.tmpdir()`），讓 Windows 原生環境可跑同一套冒煙；STAT E.md 宣稱的「三平台」因此才有單一可重現的驗收腳本。
+- **內容**：改為 env 或參數傳入輸出目錄（預設 `os.tmpdir()`），讓 Windows 原生環境可跑同一套冒煙；STATE.md 宣稱的「三平台」因此才有單一可重現的驗收腳本。
 - **風險**：低——但它是驗收基準，改動後需在至少一台 Windows＋一台 Linux 各跑一次 23/23。
 
 ### 9. 瀏覽器支援矩陣正式化

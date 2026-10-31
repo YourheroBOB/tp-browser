@@ -114,7 +114,7 @@
 | curl | 啟停腳本使用 | `/health` 檢查、`flush-and-close` | `tp-start.sh`／`tp-stop.sh` 必需 |
 | git | 僅遠端一鍵安裝路徑（`install.sh`／`install.ps1` 會 `git clone --depth 1` 預設分支） | 安裝來源 | 本地 clone 安裝不需要；供應鏈風險見 `docs/fmb-ci/04-security-scans.md` |
 | PowerShell 5+／WMI | Windows | `ego-start.ps1`、`ego-stop.ps1`、`install.ps1`、`icacls` 權限 | WMI 用於脫離管線常駐 |
-| systemd（user unit） | Linux 選配 | `scripts/ego-linux-chrome.service`（9773）＋`ego-linux-browserd.service` | 非 requisito；`ego-start` 路徑即可 |
+| systemd（user unit） | Linux 選配 | `scripts/ego-linux-chrome.service`（9773）＋`ego-linux-browserd.service` | 非必需；`ego-start` 路徑即可 |
 | Xvfb＋VNC | Linux 選配（STATE.md `claw` 節點） | 有頭模式於無顯示器主機 | 屬部署選擇，非程式相依 |
 
 ### 4.3 網路邊界

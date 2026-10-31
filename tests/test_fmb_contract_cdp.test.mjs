@@ -154,8 +154,9 @@ maybe('contract/cdp：握手無回應時 connect() 拒絕，且訊息為 "CDP co
 // XFAIL（故意 skip，不是漏測）：預期「逾時」專屬訊息，但目前被 "CDP connect failed" 搶先 reject。
 // 這是 daemon/cdp.js 的產品端問題（逾時回呼先 ws.close() 再 reject），
 // 依本任務規則不得修改既有原始碼，故保留此測試作為待修項的書面記錄。
-maybe('contract/cdp：[XFAIL] 握手無回應應回報 "CDP connect timeout: <url>"（目前被 failed 搶先）', { timeout: 15_000 }, async () => {
-  throw new Error('unreachable: XFAIL 由 skip 表達，內容僅為契約意圖的文件化');
+test('contract/cdp：[XFAIL] 握手無回應應回報 "CDP connect timeout: <url>"（目前被 failed 搶先）', { timeout: 15_000 }, async (t) => {
+  t.skip('XFAIL：預期 CDP connect timeout 訊息，目前被 CDP connect failed 搶先 reject，屬 daemon/cdp.js 待修競態');
+  return;
 });
 
 test('contract/cdp：once() 逾時錯誤格式 "<method> event timed out after <ms>"', { timeout: 10_000 }, async () => {

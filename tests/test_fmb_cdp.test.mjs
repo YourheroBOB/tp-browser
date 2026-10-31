@@ -35,7 +35,7 @@ test('Cdp 建構子的預設狀態', () => {
   assert.equal(cdp.sessions.size, 0);
 });
 
-test('C dpError 會保留 CDP 原始錯誤物件', () => {
+test('CdpError 會保留 CDP 原始錯誤物件', () => {
   const err = new CdpError('Page.navigate', { code: -32000, message: 'boom' });
   assert.equal(err.name, 'CdpError');
   assert.equal(err.message, 'Page.navigate: boom');

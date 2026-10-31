@@ -7,10 +7,10 @@
 - [CLI 指令參考](cli.md)
 - [Node.js SDK 參考](sdk.md)
 - [HTTP／SSE API 參考](http-api.md)
-- [RPC 方法參考](rpc-methods.md)
-- [公開匯出模組參考](exported-modules.md)
-- [瀏覽器內代理參考](browser-agent.md)
-- [設定項參考](configuration.md)
+- RPC 方法參考（尚未提供獨立文件，內容見 sdk.md／http-api.md）
+- 公開匯出模組參考（尚未提供獨立文件，內容見 sdk.md）
+- 瀏覽器內代理參考（尚未提供獨立文件，內容見 sdk.md）
+- 設定項參考（尚未提供獨立文件，內容見 cli.md）
 
 ## 支援基準
 

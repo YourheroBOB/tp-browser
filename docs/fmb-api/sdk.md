@@ -236,7 +236,7 @@ await page.goto("http://127.0.0.1:8765/", {
 
 ## `page.snapshot(options?)`
 
-擷取ego-format 語意快照。
+擷取 ego-format 語意快照。
 
 ### 簽名
 
@@ -360,7 +360,7 @@ SDK 的 DOM 操作若接受 selector，應使用下列已由瀏覽器端代理�
 | href | `loc=href:/account` | href 包含指定片段 |
 | XPath | `xpath=//button[@type="submit"]` | XPath expression |
 
-完整的 selector 行為與錯誤請見 [瀏覽器內代理參考](browser-agent.md)。
+完整的 selector 行為與錯誤請見瀏覽器端代理（`window.__egoAgent`）原始碼。
 
 ## SDK 錯誤處理範例
 

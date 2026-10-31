@@ -214,7 +214,7 @@ CLI 依序尋找本機 checkout 或安裝目錄中的 `SKILL.md`。若找不到�
 tp-browser version
 ```
 
-目前 CLI 输出版本與平台 build tag，例如：
+目前 CLI 輸出版本與平台 build tag，例如：
 
 ```text
 TooPower Browser (tp-browser) 0.3.1 [tp-linux / ego-linux — 強到沒朋友]
@@ -232,7 +232,7 @@ tp-browser
 tp-browser help
 ```
 
-會顯示命令摘要。`help` 沒有獨立分支，但會落到同一usage 輸出。
+會顯示命令摘要。`help` 沒有獨立分支，但會落到同一 usage 輸出。
 
 ## Daemon 命令
 

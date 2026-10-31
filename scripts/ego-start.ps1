@@ -205,10 +205,10 @@ for ($i = 0; $i -lt 24; $i++) {
             })
             $MainPid = if ($ProcInfo.Count -gt 0) { $ProcInfo[0].ProcessId } else { 0 }
             $MainSess = if ($ProcInfo.Count -gt 0) { $ProcInfo[0].SessionId } else { -1 }
-            $tabs = @(Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/list" -TimeoutSec 2 | Where-Object { $_.type -eq 'page' } | ForEach-Object { $_.title })
+            $tabCount = @(Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/list" -TimeoutSec 2 | Where-Object { $_.type -eq 'page' }).Count
             Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser), exe=$TargetExeName, pid=$MainPid, session=$MainSess, mode=$(if ($Headed) {'headed'} else {'headless'}))"
             if ($Headed) {
-                Write-Output "TP_INDICATORS: [1] Tab Title Prefix: ⚡[TP] | [2] Top 4px Gold-Green Strip | [3] Bottom-Right ⚡ TooPower Capsule | Active Tabs: $($tabs -join ' ; ')"
+                Write-Output "TP_INDICATORS: [1] Tab Title Prefix: ⚡[TP] | [2] Top 4px Gold-Green Strip | [3] Bottom-Right ⚡ TooPower Capsule | Active Tabs: $tabCount"
             }
             exit 0
         }

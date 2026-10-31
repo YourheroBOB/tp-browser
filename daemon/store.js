@@ -1,7 +1,35 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
+
+export function persistJsonAtomic(file, body, fsOps = {}) {
+  const writeFile = fsOps.writeFile ?? writeFileSync;
+  const rename = fsOps.rename ?? renameSync;
+  const remove = fsOps.remove ?? rmSync;
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFile(tmp, body, { mode: 0o600 });
+  let renameErr = null;
+  for (let i = 0; i < 2; i++) {
+    try {
+      rename(tmp, file);
+      return { ok: true, retried: i > 0 };
+    } catch (e) {
+      renameErr = e;
+    }
+  }
+  try {
+    writeFile(file, body, { mode: 0o600 });
+    try { remove(tmp, { force: true }); } catch {}
+    return { ok: true, fallback: true };
+  } catch (e2) {
+    try { remove(tmp, { force: true }); } catch {}
+    const err = new Error(`store persist failed: ${e2?.message || e2}`);
+    err.cause = e2;
+    err.renameError = renameErr;
+    throw err;
+  }
+}
 
 export class Store {
   constructor(file) {
@@ -16,14 +44,8 @@ export class Store {
   }
   persist() {
     mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
     const body = JSON.stringify(this.data, null, 1);
-    try {
-      writeFileSync(tmp, body);
-      renameSync(tmp, this.file);
-    } catch {
-      writeFileSync(this.file, body);
-    }
+    persistJsonAtomic(this.file, body);
   }
   list() { return Object.values(this.data.spaces); }
   get(id) { return this.data.spaces[id] ?? null; }

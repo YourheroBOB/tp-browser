@@ -1,23 +1,34 @@
-// Import cookies from a fixed JSON path (as written by cookies-export.ego.js).
-// The source path is a constant by design; relocate via symlink, not env vars.
-// usage: cp your-cookies.json /tmp/ego-cookies.json
-//        ego-browser nodejs < tools/cookies-import.ego.js
+// Import cookies from TP_COOKIES_FILE / EGO_COOKIES_FILE or
+// ~/.local/share/ego-linux/{cookies,ego-cookies}.json.
+// No /tmp fallback. stdout prints counts only (no cookie name/value).
+// usage: ego-browser nodejs < tools/cookies-import.ego.js
 const { readFileSync, existsSync } = await import('node:fs');
 const { join } = await import('node:path');
 const { homedir } = await import('node:os');
-// Fixed inputs: TP_COOKIES_FILE / EGO_COOKIES_FILE or ~/.local/share/ego-linux/{cookies,ego-cookies}.json
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const C1 = join(DATA_DIR, 'cookies.json');
 const C2 = join(DATA_DIR, 'ego-cookies.json');
 const envPath = process.env.TP_COOKIES_FILE || process.env.EGO_COOKIES_FILE;
-const IN = (envPath && existsSync(envPath))
-  ? envPath
-  : (existsSync(C1) ? C1 : (existsSync(C2) ? C2 : '/tmp/ego-cookies.json'));
+let IN = null;
+if (envPath && existsSync(envPath)) IN = envPath;
+else if (existsSync(C1)) IN = C1;
+else if (existsSync(C2)) IN = C2;
+if (!IN) {
+  const lines = [
+    'cookie import failed: no source file found',
+    `  TP_COOKIES_FILE/EGO_COOKIES_FILE: ${envPath ? (existsSync(envPath) ? 'exists' : 'missing') : '(unset)'}`,
+    `  ${C1}: ${existsSync(C1) ? 'exists' : 'missing'}`,
+    `  ${C2}: ${existsSync(C2) ? 'exists' : 'missing'}`,
+  ];
+  console.error(lines.join('\n'));
+  process.exitCode = 1;
+  process.exit(1);
+}
 const task = await taskSpace('cookies-import');
 const page = task.page('p1');
 const rawData = JSON.parse(readFileSync(IN, 'utf8'));
 const cookieList = Array.isArray(rawData) ? rawData : (rawData.cookies || []);
-let ok = 0; const failed = [];
+let ok = 0; let failed = 0;
 try {
   await page.cdp('Storage.setCookies', { cookies: cookieList });
   ok = cookieList.length;
@@ -33,8 +44,8 @@ try {
     };
     if (c.expires && c.expires > 0) params.expires = c.expires;
     if (c.partitionKey) params.partitionKey = c.partitionKey;
-    try { await page.cdp('Network.setCookie', params); ok++; } catch (e) { failed.push(`${c.domain} ${c.name}: ${e.message}`); }
+    try { await page.cdp('Network.setCookie', params); ok++; } catch { failed++; }
   }
 }
 await task.finish({ keep: [] });
-console.log(JSON.stringify({ imported: ok, failed: failed.length, failures: failed.slice(0, 5) }, null, 1));
+console.log(JSON.stringify({ imported: ok, failed, source: IN }, null, 1));

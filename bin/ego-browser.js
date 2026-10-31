@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { resolveNodeJsExitCode } from '../lib/nodejs-exit.js';
 
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const TOKEN_FILE = join(DATA_DIR, 'token');
@@ -218,11 +219,11 @@ async function runNodeJs(args) {
   const tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
   const tmp = join(tmpDir, 'script.mjs');
   writeFileSync(tmp, code, { mode: 0o600 });
-  let exitCode = 0;
+  let threw = false;
   try {
     await import(pathToFileURL(tmp).href);
   } catch (e) {
-    exitCode = 1;
+    threw = true;
     console.error(`${e.name || 'Error'}: ${e.message}`);
     const stack = String(e.stack || '').split('\n').slice(1, 4).join('\n');
     if (stack) console.error(stack);
@@ -231,7 +232,7 @@ async function runNodeJs(args) {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
   // The SSE event stream keeps the event loop alive; a CLI must exit explicitly.
-  process.exit(exitCode);
+  process.exit(resolveNodeJsExitCode({ scriptExitCode: process.exitCode, threw }));
 }
 
 main().catch((e) => { console.error(`${e.name || 'Error'}: ${e.message}`); process.exitCode = 1; });

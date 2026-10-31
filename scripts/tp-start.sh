@@ -39,12 +39,17 @@ fi
 # Check if running inside WSL2 and --headed is requested -> delegate to Windows desktop GUI browser!
 if [ "$HEADED" -eq 1 ] && [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
   WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  # shellcheck disable=SC1091
+  . "$(cd "$(dirname "$0")" && pwd)/lib-wsl-win-dir.sh"
+  WIN_USER=""
+  if command -v whoami.exe >/dev/null 2>&1; then
+    WIN_USER="$(whoami.exe 2>/dev/null | tr -d '\r' | awk -F'\\' '{print $NF}')"
+  fi
   WIN_EGO_DIR=""
-  for d in /mnt/c/Users/*/.local/share/ego-linux; do
-    if [ -f "$d/scripts/ego-start.ps1" ]; then WIN_EGO_DIR="$d"; break; fi
-  done
+  if [ -n "$WIN_USER" ]; then
+    WIN_EGO_DIR="$(pick_win_ego_linux_dir /mnt/c/Users "$WIN_USER" || true)"
+  fi
   if [ -x "$WIN_PS" ] && [ -n "$WIN_EGO_DIR" ]; then
-    WIN_USER="$(basename "$(dirname "$(dirname "$(dirname "$WIN_EGO_DIR")")")")"
     WIN_SCRIPT="C:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
     if [ "$RESTART" -eq 1 ]; then
       "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed -Restart

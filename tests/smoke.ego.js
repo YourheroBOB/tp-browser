@@ -1,10 +1,18 @@
 // Smoke script — run with:  ego-browser nodejs -e "$(cat tests/smoke.ego.js)"
 // Exercises the ego-browser compatible surface end to end.
-const BASE = 'http://127.0.0.1:8899/';
+const { mkdtempSync, readFileSync, existsSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+const smokePort = process.env.EGO_SMOKE_PORT || process.env.TP_FIXTURE_PORT || '8899';
+const BASE = `http://127.0.0.1:${smokePort}/`;
+const smokeDir = process.env.EGO_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'tp-smoke-'));
+const shotPath = join(smokeDir, `shot-${process.pid}.png`);
+const dlPath = join(smokeDir, `dl-${process.pid}.txt`);
 const results = [];
 const check = (name, cond, extra = '') => {
   results.push({ name, pass: !!cond, extra });
   console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
+  if (!cond) process.exitCode = 1;
 };
 
 const task = await taskSpace('ego-linux smoke');
@@ -56,17 +64,21 @@ check('popup page', !!popup && typeof popup.label === 'string', `label=${popup?.
 await popup.close();
 
 // screenshot (path write)
-const shot = await page.screenshot({ path: '/tmp/ego-linux-smoke.png' });
-check('screenshot', shot === '/tmp/ego-linux-smoke.png');
+const shot = await page.screenshot({ path: shotPath });
+let pngOk = false;
+try {
+  const buf = readFileSync(shotPath);
+  pngOk = buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+} catch {}
+check('screenshot', shot === shotPath && existsSync(shotPath) && pngOk, shotPath);
 
 // download
 const dlPromise = page.waitForEvent('download', { timeout: 10000 });
 await page.click('#dl');
 const dl = await dlPromise;
 check('download suggested name', (await dl.suggestedFilename()) === 'smoke.txt');
-await dl.saveAs('/tmp/ego-linux-smoke-dl.txt');
-const { readFileSync } = await import('node:fs');
-check('download saved', readFileSync('/tmp/ego-linux-smoke-dl.txt', 'utf8').includes('payload'));
+await dl.saveAs(dlPath);
+check('download saved', readFileSync(dlPath, 'utf8').includes('payload'));
 
 // error wording parity
 let errName = '', errMsg = '';

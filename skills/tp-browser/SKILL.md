@@ -92,7 +92,9 @@ EOF
 ### Page Navigation & Extraction
 - `await p.goto(url, { waitUntil: "load", timeout: 30000 })` — Navigate to URL.
 - `await p.text({ maxChars: 100000 })` — Extract visible `document.body.innerText`.
-- `await p.evaluate((arg) => { ... }, arg)` — Execute arbitrary JS in page context and return serializable result.
+- `await p.evaluate((arg) => { ... }, arg)` — Execute arbitrary JS in page context and return serializable result. Optional third argument `{ timeout }` (ms, capped at 10 minutes). Alias `p.eval` forwards the same opts.
+- `await p.events()` — Drain buffered page CDP events. `Network.*` events are not buffered (they are used internally for load quiet); do not rely on `events()` for request/response inspection — use `p.cdp('Network.enable')` plus a CDP listener if needed.
+- `await p.fetch(url, { saveAs })` — Fetch in page context. `saveAs` writes the body on the daemon without truncating the evaluate result, so files larger than 1 MiB still land.
 - `await p.snapshot()` — Get compact accessibility/DOM snapshot with `@N` interactive element refs.
 - `await p.screenshot({ path: "relative-name.png" })` — Save PNG screenshot inside workspace.
 

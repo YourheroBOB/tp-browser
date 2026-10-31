@@ -48,7 +48,7 @@
 
 ## ⚡ 三大系統一鍵安裝與快速開始
 
-**前置需求**：Node.js `>= 22`（或 Node 20 帶 `--experimental-websocket`）與系統已安裝的 Chrome / Edge / Brave / Chromium。
+**前置需求**：Node.js `>= 22` 與系統已安裝的 Chrome / Edge / Brave / Chromium。啟動腳本與 `install.sh`／`install.ps1` 仍帶 `--experimental-websocket`，讓較舊的 Node 實驗旗標路徑可啟動；官方需求仍是 Node `>= 22`（內建 `WebSocket`）。
 
 ### 1. Windows 原生版 (`tp-win`)
 
@@ -104,7 +104,7 @@ const data = await page.evaluate(async () => {
   window.scrollTo(0, document.body.scrollHeight);
   await new Promise(r => setTimeout(r, 500));
   return { title: document.title, text: document.body.innerText.slice(0, 500) };
-});
+}, null, { timeout: 30000 }); // optional third argument; alias page.eval forwards it too
 console.log("Extracted:", JSON.stringify(data));
 
 await task.finish({ keep: [] });
@@ -130,7 +130,7 @@ TooPower Browser 堅持「**極致輕量、零臃腫**」原則，在不引入�
 2. **防 DNS Rebinding 與跨站 CSRF 攻擊**：HTTP 層強制驗證 `Host` 標頭必須為 `127.0.0.1`，且拒絕任何帶有 `Origin` 標頭的瀏覽器跨站請求。
 3. **常數時間 Token 驗證**：透過 `crypto.timingSafeEqual` 驗證 `~/.local/share/ego-linux/token`（支援 `x-tp-token` 與 `x-ego-token`），消除時序側信道風險。
 4. **檔案系統與符號連結防逃逸 (`safePath`)**：所有截圖、下載與檔案上傳路徑均強制通過 `realpathSync.native` 真實路徑解析，阻斷 `..` 穿越與 Symlink 逃逸。
-5. **DOM 標記注入防護**：檔案上傳 `setInputFiles` 強制執行 `/^ego-\d+$/` 正則校驗，防止惡意網頁竄改 `window.__egoAgent` 注入腳本。
+5. **DOM 標記注入防護**：檔案上傳 `setInputFiles` 使用隨機 `ego-<32 hex>` nonce，並在 `try/finally` 清除屬性，防止惡意網頁預先放置可預測標記。
 6. **最小權限原則（`0700` / `0600` & Windows `icacls`）**：資料根目錄、Token、臨時執行目錄 (`mkdtempSync`) 與 `cookies.json` 均強制鎖定僅當前作業系統使用者可讀寫。
    - *安全邊界提示*：本工具設計適用於**單一使用者個人電腦或專屬開發工作站**；在多人共用的作業系統主機上，請確保使用獨立 OS 帳號以隔離本地迴路埠位。
 

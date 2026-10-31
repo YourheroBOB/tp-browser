@@ -6,38 +6,26 @@
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
-import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Cdp } from './cdp.js';
 import { Store } from './store.js';
 import { BrowserHub, EgoError } from './page-ops.js';
 import { keyDescriptor } from './keys.js';
+import {
+  validateLoopbackDebuggerWsUrl,
+  safePath,
+  writeFileNoFollow,
+  copyFileNoFollow,
+  downloadPathInDir,
+} from './path-guards.js';
+import { rejectIfForbiddenHostOrigin, RPC_MAX_BODY, writeRpcTooLarge } from './http-guard.js';
+import { clampEvalTimeout } from './eval-race.js';
+import { loopbackPortLabel } from './redact.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Every caller-supplied filesystem path passes through safePath():
-// absolute only, no '..' anywhere, no '.' components, no NUL bytes, symlink-resolved.
-function assertSafePath(p) {
-  if (typeof p !== 'string' || p.length === 0 || p.includes('\0')) throw new EgoError('BadPath', 'invalid path');
-  if (p.includes('..')) throw new EgoError('BadPath', `path traversal rejected: ${p}`);
-  if (!isAbsolute(p)) throw new EgoError('BadPath', `absolute path required, got: ${p}`);
-  const norm = resolve(p);
-  const parts = norm.split(sep);
-  if (parts.includes('..') || parts.includes('.')) throw new EgoError('BadPath', `path traversal rejected: ${p}`);
-  return norm;
-}
-function safePath(p, { mustExist = false } = {}) {
-  const norm = assertSafePath(p);
-  if (mustExist) {
-    if (!existsSync(norm)) throw new EgoError('BadPath', `path does not exist: ${p}`);
-    return assertSafePath(realpathSync.native(norm));
-  }
-  const dir = dirname(norm);
-  if (existsSync(dir)) assertSafePath(realpathSync.native(dir));
-  return norm;
-}
 
 // Data root is a fixed constant (symlink the directory to relocate it).
 // Nothing environment-derived ever reaches a filesystem write or a fetch URL.
@@ -62,12 +50,17 @@ async function attachChrome() {
     try {
       const res = await fetch(CHROME_VERSION_URL, { signal: AbortSignal.timeout(3000) });
       const info = await res.json();
-      const wsUrl = info.webSocketDebuggerUrl;
-      if (!wsUrl || !String(wsUrl).startsWith('ws://127.0.0.1:')) throw new Error('unexpected webSocketDebuggerUrl');
+      let wsUrl;
+      try {
+        wsUrl = validateLoopbackDebuggerWsUrl(info.webSocketDebuggerUrl, CHROME_DEBUG_PORT);
+      } catch {
+        log('rejected Chromium debugger WebSocket URL');
+        throw new Error('unexpected webSocketDebuggerUrl');
+      }
       const cdp = new Cdp(wsUrl, 'chrome');
       await cdp.connect();
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
-      log('attached to Chromium:', wsUrl);
+      log('attached to Chromium:', loopbackPortLabel(CHROME_DEBUG_PORT));
       cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
       // Restore persistent + promoted session cookies from vault before any navigation
       await hub.restoreVaultToBrowser();
@@ -247,6 +240,7 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (rejectIfForbiddenHostOrigin(req, res)) return;
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -258,10 +252,6 @@ const server = createServer(async (req, res) => {
     } catch (e) {
       res.writeHead(404).end('Not found');
     }
-    return;
-  }
-  if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
-    res.writeHead(403).end('forbidden host/origin');
     return;
   }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
@@ -289,7 +279,10 @@ const server = createServer(async (req, res) => {
     let total = 0;
     for await (const c of req) {
       total += c.length;
-      if (total > 1048576) { req.destroy(); return; }
+      if (total > RPC_MAX_BODY) {
+        await writeRpcTooLarge(req, res);
+        return;
+      }
       chunks.push(c);
     }
     let msg;
@@ -505,7 +498,7 @@ async function pageCall(p) {
       if (opts.path) {
         const path = safePath(opts.path);
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, Buffer.from(b64, 'base64'));
+        writeFileNoFollow(path, Buffer.from(b64, 'base64'), { mode: 0o600 });
         result = { path: opts.path };
       } else result = { base64: b64 };
       break;
@@ -584,7 +577,8 @@ async function pageCall(p) {
     }
     case 'evaluate': {
       const src = typeof args[0] === 'function' ? args[0].toString() : String(args[0]);
-      result = await h.evaluate(tid, src, args[1], { timeout: 30000 });
+      const timeout = clampEvalTimeout(args[2]?.timeout, 30000);
+      result = await h.evaluate(tid, src, args[1], { timeout });
       break;
     }
     case 'waitForFunctionProbe': {
@@ -603,7 +597,7 @@ async function pageCall(p) {
       if (v && v.__b64 !== undefined && args[1]?.saveAs) {
         const path = safePath(args[1].saveAs);
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, Buffer.from(v.__b64, 'base64'));
+        writeFileNoFollow(path, Buffer.from(v.__b64, 'base64'), { mode: 0o600 });
         delete v.__b64; delete v.b64;
         v.savedAs = path;
       } else if (v) { delete v.b64; delete v.__b64; }
@@ -651,20 +645,31 @@ async function downloadCall(p) {
       const deadline = Date.now() + 120000;
       while (rec.state !== 'completed' && rec.state !== 'canceled' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
       if (rec.state !== 'completed') throw new EgoError('DownloadError', `download ${p.guid} state=${rec.state}`);
-      const src = join(h.downloadsDir, p.guid);
-      const srcAlt = join(h.downloadsDir, rec.suggestedFilename);
-      const from = existsSync(src) ? src : srcAlt;
+      let from;
+      try {
+        const src = downloadPathInDir(h.downloadsDir, p.guid);
+        const srcAlt = rec.suggestedFilename
+          ? downloadPathInDir(h.downloadsDir, rec.suggestedFilename)
+          : src;
+        from = existsSync(src) ? src : srcAlt;
+      } catch {
+        throw new EgoError('DownloadError', `invalid download path for ${p.guid}`);
+      }
       if (!existsSync(from)) throw new EgoError('DownloadError', `download file for ${p.guid} not found`);
       if (p.method === 'path') return from;
       const to = safePath((p.args || [])[0]);
       mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(from, to);
+      copyFileNoFollow(from, to, { mode: 0o600 });
       return { savedAs: to };
     }
     case 'cancel': await h.cdp.send('Browser.cancelDownload', { guid: p.guid }).catch(() => {}); return { canceled: true };
     case 'delete': {
-      for (const f of [join(h.downloadsDir, p.guid), join(h.downloadsDir, rec.suggestedFilename)]) {
-        try { if (existsSync(f)) rmSync(f); } catch {}
+      const candidates = [p.guid, rec.suggestedFilename].filter(Boolean);
+      for (const name of candidates) {
+        try {
+          const f = downloadPathInDir(h.downloadsDir, name);
+          if (existsSync(f)) rmSync(f);
+        } catch {}
       }
       return { deleted: true };
     }

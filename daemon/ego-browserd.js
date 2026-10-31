@@ -7,7 +7,7 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
-import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
+import { join, dirname, basename, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Cdp } from './cdp.js';
@@ -245,7 +245,7 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 </html>`;
 
 // ---------- HTTP server ----------
-const server = createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
@@ -266,6 +266,9 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
   if (url.pathname === '/flush-and-close') {
+    // Closes the browser: same token gate as /rpc, and only via POST.
+    if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }).end('method not allowed'); return; }
+    if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
     try {
       if (hub) {
         await hub.syncVaultNow().catch(() => {});
@@ -287,13 +290,19 @@ const server = createServer(async (req, res) => {
     if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
     const chunks = [];
     let total = 0;
+    let tooLarge = false;
     for await (const c of req) {
       total += c.length;
-      if (total > 1048576) { req.destroy(); return; }
+      if (total > 1048576) { tooLarge = true; continue; }
       chunks.push(c);
     }
+    if (tooLarge) { res.writeHead(413, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'request body exceeds 1 MiB' } })); return; }
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.method !== 'string') {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'expected {"method": string, "params"?: object}' } }));
+      return;
+    }
     try {
       const result = await dispatch(msg.method, msg.params || {});
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: msg.id ?? null, ok: true, result }));
@@ -303,6 +312,16 @@ const server = createServer(async (req, res) => {
     return;
   }
   res.writeHead(404).end('not found');
+}
+
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch((e) => {
+    log('request failed:', e?.message || e);
+    try {
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'InternalError', message: 'request failed' } }));
+      else res.end();
+    } catch {}
+  });
 });
 
 // ---------- RPC ----------
@@ -485,7 +504,7 @@ async function pageCall(p) {
   let result;
   switch (method) {
     case 'goto': result = await h.goto(tid, ...args); break;
-    case 'reload': result = await h.goto(tid, pg.url || 'about:blank', args[0] || {}); break;
+    case 'reload': result = await h.goto(tid, h.sessions.get(tid)?.url || pg.url || 'about:blank', args[0] || {}); break;
     case 'url': result = (await h.info(tid)).url; break;
     case 'title': result = (await h.info(tid)).title; break;
     case 'info': result = await h.info(tid); break;
@@ -559,13 +578,16 @@ async function pageCall(p) {
       await h.mouseInput(tid, 'mousePressed', x, y, { button: opts.button, clickCount: opts.clickCount });
       if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay));
       await h.mouseInput(tid, 'mouseReleased', x, y, { button: opts.button, clickCount: opts.clickCount });
+      h._pos = { x, y };
       result = {};
       break;
     }
     case 'mouse.move': {
       const [x, y, opts = {}] = args;
-      const steps = opts.steps ?? 1;
-      for (let i = 1; i <= steps; i++) await h.mouseInput(tid, 'mouseMoved', x * i / steps, y * i / steps);
+      const steps = Math.max(1, Math.floor(Number(opts.steps) || 1));
+      const fx = h._pos?.x ?? 0;
+      const fy = h._pos?.y ?? 0;
+      for (let i = 1; i <= steps; i++) await h.mouseInput(tid, 'mouseMoved', fx + (x - fx) * i / steps, fy + (y - fy) * i / steps);
       h._pos = { x, y };
       result = {};
       break;
@@ -639,6 +661,17 @@ async function pageCall(p) {
   return result;
 }
 
+// Candidate on-disk names for a download, restricted to plain file names inside downloadsDir.
+function downloadFiles(h, guid, rec) {
+  const out = [];
+  for (const name of [guid, rec?.suggestedFilename]) {
+    if (typeof name !== 'string' || !name || name.includes('\0')) continue;
+    if (name === '.' || name === '..' || basename(name) !== name || name.includes('/') || name.includes('\\')) continue;
+    out.push(join(h.downloadsDir, name));
+  }
+  return out;
+}
+
 async function downloadCall(p) {
   const h = requireHub();
   const rec = h.downloads.get(p.guid);
@@ -651,10 +684,8 @@ async function downloadCall(p) {
       const deadline = Date.now() + 120000;
       while (rec.state !== 'completed' && rec.state !== 'canceled' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
       if (rec.state !== 'completed') throw new EgoError('DownloadError', `download ${p.guid} state=${rec.state}`);
-      const src = join(h.downloadsDir, p.guid);
-      const srcAlt = join(h.downloadsDir, rec.suggestedFilename);
-      const from = existsSync(src) ? src : srcAlt;
-      if (!existsSync(from)) throw new EgoError('DownloadError', `download file for ${p.guid} not found`);
+      const from = downloadFiles(h, p.guid, rec).find((f) => existsSync(f));
+      if (!from) throw new EgoError('DownloadError', `download file for ${p.guid} not found`);
       if (p.method === 'path') return from;
       const to = safePath((p.args || [])[0]);
       mkdirSync(dirname(to), { recursive: true });
@@ -663,7 +694,7 @@ async function downloadCall(p) {
     }
     case 'cancel': await h.cdp.send('Browser.cancelDownload', { guid: p.guid }).catch(() => {}); return { canceled: true };
     case 'delete': {
-      for (const f of [join(h.downloadsDir, p.guid), join(h.downloadsDir, rec.suggestedFilename)]) {
+      for (const f of downloadFiles(h, p.guid, rec)) {
         try { if (existsSync(f)) rmSync(f); } catch {}
       }
       return { deleted: true };

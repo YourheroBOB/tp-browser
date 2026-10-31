@@ -688,6 +688,12 @@ export class BrowserHub {
   }
 
   _sessionEvent(tid, st, method, params) {
+    if (method === 'Runtime.executionContextCreated' && params.context) {
+      if (!st.ctxOrigins) st.ctxOrigins = new Map();
+      st.ctxOrigins.set(params.context.id, { origin: String(params.context.origin || ''), frameId: params.context.auxData?.frameId ?? null });
+    } else if (method === 'Runtime.executionContextDestroyed') {
+      st.ctxOrigins?.delete(params.executionContextId);
+    }
     switch (method) {
       case 'Page.frameNavigated':
         st.frames.add(params.frame.id);
@@ -718,6 +724,7 @@ export class BrowserHub {
         return;
       case 'Runtime.executionContextsCleared':
         st.injected = false;
+        st.ctxOrigins?.clear();
         return;
       case 'Page.javascriptDialogOpening':
         st.dialogs.push({ type: params.type, message: params.message, url: params.url, defaultPrompt: params.defaultPrompt });
@@ -742,8 +749,15 @@ export class BrowserHub {
       case 'Runtime.bindingCalled':
         if (params.name === '__tpCoRideAction') {
           try {
+            // The binding is callable by any script in the tab, so trust only the
+            // top-level frame and the origin Chromium reports for the calling context.
+            const ctx = st.ctxOrigins?.get(params.executionContextId) || null;
+            if (ctx && st.mainFrameId && ctx.frameId && ctx.frameId !== st.mainFrameId) return;
             const payload = JSON.parse(params.payload || '{}');
             if (payload?.action === 'syncStorage') {
+              let topOrigin = '';
+              try { topOrigin = new URL(String(st.url || '')).origin; } catch {}
+              if (!ctx || !topOrigin || ctx.origin !== topOrigin || payload.origin !== topOrigin) return;
               this._handleStorageSync(payload);
             } else {
               this.onPush(tid, 'coride', payload);
@@ -1021,9 +1035,11 @@ export class BrowserHub {
     const st = this.sessionOf(targetId);
     const [x, y] = args;
     if (op === 'move') {
-      const steps = opts.steps ?? 1;
+      const steps = Math.max(1, Math.floor(Number(opts.steps) || 1));
+      const fx = this._pos?.x ?? 0;
+      const fy = this._pos?.y ?? 0;
       for (let i = 1; i <= steps; i++) {
-        await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(x * i / steps), y: Math.round(y * i / steps) }, { sessionId: st.sessionId });
+        await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(fx + (x - fx) * i / steps), y: Math.round(fy + (y - fy) * i / steps) }, { sessionId: st.sessionId });
       }
       this._pos = { x, y };
       return {};
@@ -1136,7 +1152,8 @@ export class BrowserHub {
     if (!info) throw new EgoError('ElementResolutionError', `page.setInputFiles: no file input resolves from ${selector}`);
     if (files.length > 1 && !info.multiple) throw new EgoError('NotSupportedError', 'input does not accept multiple files');
     const mark = await this.call(targetId, 'markForDom', JSON.stringify([r.hid]));
-    if (typeof mark !== 'string' || !/^ego-\d+$/.test(mark)) throw new EgoError('PageError', 'invalid DOM mark');
+    // inpage.agent.js markForDom() returns "egoid-<base36 time>-<base36 random>"
+    if (typeof mark !== 'string' || !/^egoid-[a-z0-9]+-[a-z0-9]*$/.test(mark)) throw new EgoError('PageError', 'invalid DOM mark');
     const st = this.sessionOf(targetId);
     const doc = await this.cdp.send('DOM.getDocument', { depth: 0 }, { sessionId: st.sessionId });
     const node = await this.cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: `[data-ego-dom="${mark}"]` }, { sessionId: st.sessionId });

@@ -74,4 +74,4 @@ createServer((req, res) => {
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   res.end(html);
-}).listen(8899, '127.0.0.1', () => console.log('smoke page: http://127.0.0.1:8899/'));
+}).listen(Number(process.env.TP_FIXTURE_PORT || 8899), '127.0.0.1', () => console.log('smoke page: http://127.0.0.1:' + (process.env.TP_FIXTURE_PORT || 8899) + '/'));

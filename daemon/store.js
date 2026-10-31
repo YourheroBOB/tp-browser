@@ -71,4 +71,14 @@ export class Store {
     this.persist();
   }
   deleteSpace(id) { delete this.data.spaces[id]; this.persist(); }
+  // RG-A4: used by the co-ride capsule push to find which space/page owns a tab.
+  findByTargetId(targetId) {
+    if (!targetId) return null;
+    for (const space of this.list()) {
+      for (const [label, pg] of Object.entries(space.pages || {})) {
+        if (pg && pg.targetId === targetId) return { space, label };
+      }
+    }
+    return null;
+  }
 }

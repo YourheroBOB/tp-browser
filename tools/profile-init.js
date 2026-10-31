@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Automatically initializes `profile-agent/Default/Preferences` to always show the
 // native Bookmarks Bar (`bookmark_bar.show_on_all_tabs = true`), enable session persistence,
-// and import the user's existing local browser Bookmarks, Favicons, Saved Logins, Local Storage & IndexedDB.
+// and import the user's existing local browser Bookmarks & Favicons.
+// RG-A1: saved logins, cookies, os_crypt key, Web Data, Local Storage & IndexedDB are copied ONLY
+// when explicitly requested (--sync-auth / --import-auth / TP_IMPORT_AUTH=1). Default is a clean agent profile.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -66,7 +68,10 @@ function dirSize(dir) {
 const dstBookmarks = join(profileDef, 'Bookmarks');
 const dstAccountBookmarks = join(profileDef, 'AccountBookmarks');
 const dstFavicons = join(profileDef, 'Favicons');
-const forceSync = process.argv.includes('--force') || process.argv.includes('--sync-auth');
+const syncAuth = process.argv.includes('--sync-auth') || process.argv.includes('--import-auth') || process.env.TP_IMPORT_AUTH === '1';
+// RG-A1b: --sync-auth only widens WHAT is copied; it no longer bypasses the size guards that
+// protect newer agent-side files. Use --force explicitly to overwrite.
+const forceSync = process.argv.includes('--force');
 
 const candidates = [];
 const addRoot = (baseDir) => {
@@ -89,8 +94,14 @@ const addRoot = (baseDir) => {
 if (process.platform === 'darwin') {
   const appSup = join(home, 'Library', 'Application Support');
   addRoot(join(appSup, 'Google', 'Chrome'));
+  addRoot(join(appSup, 'Google', 'Chrome Beta'));
+  addRoot(join(appSup, 'Google', 'Chrome Dev'));
+  addRoot(join(appSup, 'Google', 'Chrome Canary'));
   addRoot(join(appSup, 'Citro Labs', 'ego lite'));
   addRoot(join(appSup, 'Microsoft Edge'));
+  addRoot(join(appSup, 'Microsoft Edge Beta'));
+  addRoot(join(appSup, 'Microsoft Edge Dev'));
+  addRoot(join(appSup, 'Microsoft Edge Canary'));
   addRoot(join(appSup, 'BraveSoftware', 'Brave-Browser'));
   addRoot(join(appSup, 'Comet'));
   addRoot(join(appSup, 'Chromium'));
@@ -144,86 +155,93 @@ if (bestCandidate) {
     } catch {}
   }
 
-  // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
-  for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {
-    const srcDb = join(bestCandidate.profDir, dbName);
-    const dstDb = join(profileDef, dbName);
-    const srcSz = fileSize(srcDb);
-    const dstSz = fileSize(dstDb);
-    if (srcSz > 0 && (forceSync || dstSz < srcSz * 0.5)) {
+  if (!syncAuth) {
+    console.log('Auth data (logins/cookies/storage) not imported; pass --sync-auth or TP_IMPORT_AUTH=1 to opt in.');
+  } else {
+    // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
+    for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {
+      const srcDb = join(bestCandidate.profDir, dbName);
+      const dstDb = join(profileDef, dbName);
+      const srcSz = fileSize(srcDb);
+      const dstSz = fileSize(dstDb);
+      if (srcSz > 0 && (forceSync || dstSz < srcSz * 0.5)) {
+        try {
+          for (const ext of ['-journal', '-wal', '-shm']) {
+            try { if (existsSync(dstDb + ext)) unlinkSync(dstDb + ext); } catch {}
+          }
+          copyFileSync(srcDb, dstDb);
+        } catch {}
+      }
+    }
+
+    // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny
+    const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
+      ? join(bestCandidate.profDir, 'Network', 'Cookies')
+      : join(bestCandidate.profDir, 'Cookies');
+    // Chrome 96+ reads Default/Network/Cookies on macOS, Linux, and Windows.
+    // Writing the legacy Default/Cookies file (the old non-Windows path) is ignored,
+    // so an opt-in import on macOS never showed up in the agent profile.
+    const dstCookiesDir = join(profileDef, 'Network');
+    const dstCookies = join(dstCookiesDir, 'Cookies');
+    if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
       try {
+        mkdirSync(dstCookiesDir, { recursive: true });
         for (const ext of ['-journal', '-wal', '-shm']) {
-          try { if (existsSync(dstDb + ext)) unlinkSync(dstDb + ext); } catch {}
+          try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
         }
-        copyFileSync(srcDb, dstDb);
+        copyFileSync(srcCookies, dstCookies);
+        const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
+        const dstLocalStatePath = join(profileRoot, 'Local State');
+        if (existsSync(srcLocalStatePath)) {
+          const srcLs = JSON.parse(readFileSync(srcLocalStatePath, 'utf8'));
+          let dstLs = {};
+          if (existsSync(dstLocalStatePath)) {
+            try { dstLs = JSON.parse(readFileSync(dstLocalStatePath, 'utf8')); } catch { dstLs = {}; }
+          }
+          if (srcLs.os_crypt) {
+            dstLs.os_crypt = srcLs.os_crypt;
+            writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
+          }
+        }
       } catch {}
     }
-  }
 
-  // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny
-  const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
-    ? join(bestCandidate.profDir, 'Network', 'Cookies')
-    : join(bestCandidate.profDir, 'Cookies');
-  const dstCookiesDir = process.platform === 'win32' ? join(profileDef, 'Network') : profileDef;
-  const dstCookies = join(dstCookiesDir, 'Cookies');
-  if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
-    try {
-      mkdirSync(dstCookiesDir, { recursive: true });
-      for (const ext of ['-journal', '-wal', '-shm']) {
-        try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
-      }
-      copyFileSync(srcCookies, dstCookies);
-      const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
-      const dstLocalStatePath = join(profileRoot, 'Local State');
-      if (existsSync(srcLocalStatePath)) {
-        const srcLs = JSON.parse(readFileSync(srcLocalStatePath, 'utf8'));
-        let dstLs = {};
-        if (existsSync(dstLocalStatePath)) {
-          try { dstLs = JSON.parse(readFileSync(dstLocalStatePath, 'utf8')); } catch { dstLs = {}; }
+    // Sync Local Storage leveldb if profile-agent Local Storage is empty/small (< 2 MB vs larger source)
+    const srcLsDir = join(bestCandidate.profDir, 'Local Storage', 'leveldb');
+    const dstLsDir = join(profileDef, 'Local Storage', 'leveldb');
+    const srcLsSz = dirSize(srcLsDir);
+    const dstLsSz = dirSize(dstLsDir);
+    if (srcLsSz > 0 && (forceSync || (dstLsSz < 1500000 && dstLsSz < srcLsSz * 0.3))) {
+      try {
+        mkdirSync(dstLsDir, { recursive: true });
+        for (const f of readdirSync(srcLsDir)) {
+          if (f === 'LOCK') continue;
+          try { copyFileSync(join(srcLsDir, f), join(dstLsDir, f)); } catch {}
         }
-        if (srcLs.os_crypt) {
-          dstLs.os_crypt = srcLs.os_crypt;
-          writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
-        }
-      }
-    } catch {}
-  }
+        console.log(`Synced Local Storage (${Math.round(srcLsSz / 1024)} KB) from: ${srcLsDir}`);
+      } catch {}
+    }
 
-  // Sync Local Storage leveldb if profile-agent Local Storage is empty/small (< 2 MB vs larger source)
-  const srcLsDir = join(bestCandidate.profDir, 'Local Storage', 'leveldb');
-  const dstLsDir = join(profileDef, 'Local Storage', 'leveldb');
-  const srcLsSz = dirSize(srcLsDir);
-  const dstLsSz = dirSize(dstLsDir);
-  if (srcLsSz > 0 && (forceSync || (dstLsSz < 1500000 && dstLsSz < srcLsSz * 0.3))) {
-    try {
-      mkdirSync(dstLsDir, { recursive: true });
-      for (const f of readdirSync(srcLsDir)) {
-        if (f === 'LOCK') continue;
-        try { copyFileSync(join(srcLsDir, f), join(dstLsDir, f)); } catch {}
-      }
-      console.log(`Synced Local Storage (${Math.round(srcLsSz / 1024)} KB) from: ${srcLsDir}`);
-    } catch {}
-  }
-
-  // Sync missing https_* IndexedDB origins from primary browser into profile-agent
-  const srcIdbDir = join(bestCandidate.profDir, 'IndexedDB');
-  const dstIdbDir = join(profileDef, 'IndexedDB');
-  if (existsSync(srcIdbDir)) {
-    try {
-      mkdirSync(dstIdbDir, { recursive: true });
-      for (const entry of readdirSync(srcIdbDir)) {
-        if (!entry.startsWith('https_')) continue;
-        const dstEntry = join(dstIdbDir, entry);
-        if (!existsSync(dstEntry)) {
-          try {
-            cpSync(join(srcIdbDir, entry), dstEntry, {
-              recursive: true,
-              filter: (src) => !src.endsWith('LOCK'),
-            });
-          } catch {}
+    // Sync missing https_* IndexedDB origins from primary browser into profile-agent
+    const srcIdbDir = join(bestCandidate.profDir, 'IndexedDB');
+    const dstIdbDir = join(profileDef, 'IndexedDB');
+    if (existsSync(srcIdbDir)) {
+      try {
+        mkdirSync(dstIdbDir, { recursive: true });
+        for (const entry of readdirSync(srcIdbDir)) {
+          if (!entry.startsWith('https_')) continue;
+          const dstEntry = join(dstIdbDir, entry);
+          if (!existsSync(dstEntry)) {
+            try {
+              cpSync(join(srcIdbDir, entry), dstEntry, {
+                recursive: true,
+                filter: (src) => !src.endsWith('LOCK'),
+              });
+            } catch {}
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
   }
 }
 

@@ -13,6 +13,12 @@ const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const COOKIES_VAULT_PATH = join(DATA_DIR, 'cookies-vault.json');
 const STORAGE_VAULT_PATH = join(DATA_DIR, 'storage-vault.json');
 const TABS_VAULT_PATH = join(DATA_DIR, 'session-tabs.json');
+// RG-A2: the session vault (cookies/storage/open-tabs written to DATA_DIR) is OPT-IN.
+// Default: nothing is persisted outside Chromium's own profile and session cookies stay session cookies.
+// TP_SESSION_VAULT=1 enables the vault; TP_PROMOTE_SESSION_COOKIES=1 additionally promotes
+// session cookies to 30-day persistent cookies (previous default behaviour).
+export const VAULT_ENABLED = process.env.TP_SESSION_VAULT === '1';
+const PROMOTE_SESSION = VAULT_ENABLED && process.env.TP_PROMOTE_SESSION_COOKIES === '1';
 
 function cookieKey(c) {
   return `${c.name || ''}|${c.domain || ''}|${c.path || '/'}`;
@@ -27,8 +33,9 @@ function toCookieParam(c) {
   const path = isHostPrefix ? '/' : (c.path || '/');
   const url = (secure ? 'https://' : 'http://') + host + path;
   const now = Math.floor(Date.now() / 1000);
-  const expires = (!c.expires || c.expires <= 0 || c.session) ? (now + 30 * 86400) : c.expires;
-  if (expires <= now) return null;
+  const isSess = !c.expires || c.expires <= 0 || c.session;
+  const expires = isSess ? (PROMOTE_SESSION ? now + 30 * 86400 : undefined) : c.expires;
+  if (expires !== undefined && expires <= now) return null;
   const param = {
     name: c.name,
     value: c.value,
@@ -36,8 +43,8 @@ function toCookieParam(c) {
     path,
     secure,
     httpOnly: Boolean(c.httpOnly),
-    expires,
   };
+  if (expires !== undefined) param.expires = expires;
   if (!isHostPrefix && c.domain) {
     param.domain = c.domain;
   }
@@ -225,7 +232,8 @@ export class BrowserHub {
     this.popupsSeen = []; // {targetId, openerId, at}
     this.cookieVault = new Map(); // cookieKey -> cookie
     this.storageVault = {}; // origin -> { ls: [[k,v]], ss: [[k,v]], updatedAt }
-    this._loadVaultsFromDisk();
+    this.vaultEnabled = VAULT_ENABLED;
+    if (this.vaultEnabled) this._loadVaultsFromDisk();
     this._wire();
     this._sweepTick = 0;
     this._sweepTimer = setInterval(() => {
@@ -265,11 +273,12 @@ export class BrowserHub {
         const now = Math.floor(Date.now() / 1000);
         for (const c of list) {
           if (!c || !c.name || !c.domain) continue;
-          if (!c.expires || c.expires <= 0 || c.session) {
+          const isSess = !c.expires || c.expires <= 0 || c.session;
+          if (isSess && PROMOTE_SESSION) {
             c.expires = now + 30 * 86400;
             c.session = false;
           }
-          if (c.expires > now) {
+          if ((isSess && !PROMOTE_SESSION) || c.expires > now) {
             this.cookieVault.set(cookieKey(c), c);
           }
         }
@@ -285,17 +294,21 @@ export class BrowserHub {
     } catch {}
   }
 
-  _persistCookieVault() {
+  _persistCookieVault({ throwOnError = false } = {}) {
     try {
       const cookies = [...this.cookieVault.values()];
       writeFileSync(COOKIES_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), cookies }), { mode: 0o600 });
-    } catch {}
+    } catch (error) {
+      if (throwOnError) throw error;
+    }
   }
 
-  _persistStorageVault() {
+  _persistStorageVault({ throwOnError = false } = {}) {
     try {
       writeFileSync(STORAGE_VAULT_PATH, JSON.stringify(this.storageVault), { mode: 0o600 });
-    } catch {}
+    } catch (error) {
+      if (throwOnError) throw error;
+    }
   }
 
   _buildStoragePreloadScript() {
@@ -325,6 +338,7 @@ export class BrowserHub {
   }
 
   _injectOriginStorageIfPresent(st) {
+    if (!this.vaultEnabled) return;
     try {
       if (!st || st.isPopup) return;
       const u = String(st.url || '');
@@ -360,6 +374,7 @@ export class BrowserHub {
   }
 
   async restoreVaultToBrowser() {
+    if (!this.vaultEnabled) return;
     try {
       const params = [];
       for (const c of this.cookieVault.values()) {
@@ -372,61 +387,81 @@ export class BrowserHub {
     } catch {}
   }
 
-  async syncVaultNow() {
-    if (this._syncingVault) return;
-    this._syncingVault = true;
+  async syncVaultNow({ flush = false } = {}) {
+    if (!this.vaultEnabled) return;
+    // Wait for an in-flight sweep, then take a fresh snapshot for shutdown.
+    if (this._syncingVault && !flush) return;
+    while (this._syncingVault) {
+      try { await this._syncingVault; } catch {}
+    }
+    this._syncingVault = this._syncVaultNow({ flush });
     try {
-      const { cookies } = await this.cdp.send('Storage.getCookies', {});
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        const now = Math.floor(Date.now() / 1000);
-        const toPromote = [];
-        let changed = false;
-        for (const c of cookies) {
-          if (!c || !c.name || !c.domain) continue;
-          const isSession = !c.expires || c.expires <= 0 || c.session;
-          if (isSession) {
-            c.expires = now + 30 * 86400;
-            c.session = false;
-            const p = toCookieParam(c);
-            if (p) toPromote.push(p);
-            changed = true;
-          }
-          const key = cookieKey(c);
-          const prev = this.cookieVault.get(key);
-          if (!prev || prev.value !== c.value || Math.abs((prev.expires || 0) - (c.expires || 0)) > 60) {
-            this.cookieVault.set(key, c);
-            changed = true;
-          }
+      await this._syncingVault;
+    } catch (error) {
+      if (flush) throw error;
+    } finally {
+      this._syncingVault = null;
+    }
+  }
+
+  async _syncVaultNow({ flush }) {
+    const { cookies } = await this.cdp.send('Storage.getCookies', {});
+    if (!Array.isArray(cookies)) throw new Error('Invalid Storage.getCookies response');
+    let changed = false;
+    if (cookies.length > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const toPromote = [];
+      for (const c of cookies) {
+        if (!c || !c.name || !c.domain) continue;
+        const isSession = !c.expires || c.expires <= 0 || c.session;
+        if (isSession && PROMOTE_SESSION) {
+          c.expires = now + 30 * 86400;
+          c.session = false;
+          const p = toCookieParam(c);
+          if (p) toPromote.push(p);
+          changed = true;
         }
-        if (toPromote.length > 0) {
-          await this.cdp.send('Storage.setCookies', { cookies: toPromote }).catch(() => {});
-        }
-        if (changed) {
-          this._persistCookieVault();
-        }
-      }
-      // Also record open user https:// tabs (excluding login/oauth interstitials)
-      const openUrls = [];
-      const seen = new Set();
-      for (const [, st] of this.sessions) {
-        if (st.isPopup) continue;
-        const u = String(st.url || '');
-        if (!u.startsWith('https://')) continue;
-        if (/login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com|\/oauth|\/signin|\/login/i.test(u)) continue;
-        if (!seen.has(u)) {
-          seen.add(u);
-          openUrls.push({ url: u, title: st.title || '' });
+        const key = cookieKey(c);
+        const prev = this.cookieVault.get(key);
+        if (!prev || prev.value !== c.value || Math.abs((prev.expires || 0) - (c.expires || 0)) > 60) {
+          this.cookieVault.set(key, c);
+          changed = true;
         }
       }
-      if (openUrls.length > 0) {
-        writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
+      if (toPromote.length > 0) {
+        await this.cdp.send('Storage.setCookies', { cookies: toPromote }).catch((error) => {
+          if (flush) throw error;
+        });
       }
-    } catch {} finally {
-      this._syncingVault = false;
+    }
+    // A shutdown flush retries disk writes even for unchanged in-memory values.
+    // Periodic sweeps retain their existing write frequency and disk formats.
+    if (changed || flush) {
+      this._persistCookieVault({ throwOnError: flush });
+    }
+    if (flush) {
+      this._persistStorageVault({ throwOnError: true });
+    }
+    // Also record open user https:// tabs (excluding login/oauth interstitials)
+    const openUrls = [];
+    const seen = new Set();
+    for (const [, st] of this.sessions) {
+      if (st.isPopup) continue;
+      const u = String(st.url || '');
+      if (!u.startsWith('https://')) continue;
+      if (/login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com|\/oauth|\/signin|\/login/i.test(u)) continue;
+      if (!seen.has(u)) {
+        seen.add(u);
+        openUrls.push({ url: u, title: st.title || '' });
+      }
+    }
+    if (openUrls.length > 0) {
+      writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
     }
   }
 
   getSavedTabs() {
+    if (!this.vaultEnabled) return [];
     try {
       if (existsSync(TABS_VAULT_PATH)) {
         const raw = JSON.parse(readFileSync(TABS_VAULT_PATH, 'utf8'));
@@ -437,6 +472,7 @@ export class BrowserHub {
   }
 
   _handleStorageSync(payload) {
+    if (!this.vaultEnabled) return;
     try {
       const origin = String(payload?.origin || '');
       if (!origin.startsWith('https://')) return;
@@ -576,6 +612,8 @@ export class BrowserHub {
     // ONLY override User-Agent when running in HeadlessChrome mode!
     // In headed mode, the real Chrome/Edge binary already has 100% authentic UA + Client Hints,
     // and overriding them via CDP breaks hCaptcha/Cloudflare/OAuth client attestation!
+    // RG-A13b: explicit headless flag; never rejects, so screenshot never fails because of it.
+    this._headlessPromise = cdp.send('Browser.getVersion').then((v) => /Headless/i.test(v?.userAgent || '')).catch(() => false);
     this._cleanUaPromise = cdp.send('Browser.getVersion').then((v) => {
       const rawUa = v?.userAgent || '';
       if (!/Headless/i.test(rawUa)) return null;
@@ -645,7 +683,7 @@ export class BrowserHub {
         }).catch(() => {});
       }
       await this.cdp.send('Runtime.addBinding', { name: '__tpCoRideAction' }, opts).catch(() => {});
-      await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: this._buildStoragePreloadScript() }, opts).catch(() => {});
+      if (this.vaultEnabled) await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: this._buildStoragePreloadScript() }, opts).catch(() => {});
       await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: CORIDE_BAR_SCRIPT }, opts).catch(() => {});
       if (isAlreadyLoaded) {
         this._ensureCoRideBar(st, true);
@@ -794,7 +832,9 @@ export class BrowserHub {
     const st = this.sessionOf(targetId);
     st.agentNavigating = true;
     if (st._newtabRedirectTimer) { clearTimeout(st._newtabRedirectTimer); st._newtabRedirectTimer = null; }
-    if (bringToFront || /login\.microsoftonline\.com|devicelogin|login\.live\.com|accounts\.google\.com|oauth2\/|signin/i.test(String(url || ''))) {
+    // Only the big identity providers pull the window forward for a human login; any other page
+    // opens without taking the user's focus (pass bringToFront when a human must act).
+    if (bringToFront || /^https:\/\/(login\.microsoftonline\.com|login\.live\.com|accounts\.google\.com)\/|^https:\/\/(www\.)?microsoft\.com\/devicelogin/i.test(String(url || ''))) {
       await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId }).catch(() => {});
     }
     if (!st.uaCleaned && this._cleanUaPromise) {
@@ -1065,6 +1105,21 @@ export class BrowserHub {
     const params = { format: 'png' };
     if (fullPage) params.captureBeyondViewport = true;
     if (clip && typeof clip === 'object') params.clip = { x: clip.x, y: clip.y, width: clip.width, height: clip.height, scale: 1 };
+    // RG-A13: headless Edge/Chrome does not present a new compositor surface for a
+    // background tab after its popup closes. Focus emulation still reports the opener
+    // as visible, so Page.captureScreenshot waits forever on CopyFromSurface.
+    // fromSurface:false and setDefaultBackgroundColorOverride do not unblock it.
+    // Activating the tab does. Headless has no HWND, so this does not steal a
+    // person's visible window. Never do it when the browser is headed.
+    // RG-A13b: gate on the explicit headless flag, not the UA-cleanup result. visibilityState cannot narrow
+    // this down: the stuck tab still reports 'visible'. Not cached per tab: a popup can take front in between.
+    if (this._headlessPromise && (await this._headlessPromise)) {
+      try {
+        await this.cdp.send('Page.bringToFront', {}, { sessionId: st.sessionId, timeout: 5000 });
+      } catch (e) {
+        console.warn('[tp] screenshot: Page.bringToFront failed (' + (e && e.message) + '); capturing anyway');
+      }
+    }
     const res = await this.cdp.send('Page.captureScreenshot', params, { sessionId: st.sessionId, timeout: 60000 });
     return res.data; // base64
   }

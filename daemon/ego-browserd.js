@@ -6,14 +6,16 @@
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync, readlinkSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { Cdp } from './cdp.js';
 import { Store } from './store.js';
 import { BrowserHub, EgoError } from './page-ops.js';
 import { keyDescriptor } from './keys.js';
+import { handleFlushAndClose } from './flush-and-close.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -42,11 +44,25 @@ function safePath(p, { mustExist = false } = {}) {
 // Data root is a fixed constant (symlink the directory to relocate it).
 // Nothing environment-derived ever reaches a filesystem write or a fetch URL.
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
-const ALT_PORT = process.argv.includes('--alt-port') || process.env.EGO_BROWSERD_PORT === '9774';
-const PORT = ALT_PORT ? 9774 : 9772;
-// Chromium attach target is a fixed loopback constant (no env/config input).
-const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;
-const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
+// Ports: defaults 9772 (daemon) / 9773 (Chromium CDP); --alt-port keeps the legacy 9774/9775 pair.
+// FIX-1151022: EGO_BROWSERD_PORT / EGO_CHROME_PORT override them (previously every value except '9774'
+// silently fell back to 9772, so private instances grabbed the main TP port). Only a validated integer
+// port is taken from the environment; the host is always the fixed loopback 127.0.0.1.
+function envPort(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^\d{1,5}$/.test(raw) || Number(raw) < 1024 || Number(raw) > 65535) {
+    console.error(`[tp-browserd] FATAL: ${name}=${JSON.stringify(raw)} is not a port in 1024-65535`);
+    process.exit(2);
+  }
+  return Number(raw);
+}
+const ALT_PORT = process.argv.includes('--alt-port');
+const PORT = envPort('EGO_BROWSERD_PORT', ALT_PORT ? 9774 : 9772);
+const CHROME_DEBUG_PORT = envPort('EGO_CHROME_PORT', ALT_PORT ? 9775 : 9773);
+const CHROME_VERSION_URL = `http://127.0.0.1:${CHROME_DEBUG_PORT}/json/version`;
+const STARTED_AT = new Date().toISOString();
+let chromeIdentity = null; // { cdpPort, wsPort, browserId, product, pid, userDataDir }
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
 mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 mkdirSync(DOWNLOADS_DIR, { recursive: true, mode: 0o700 });
@@ -57,6 +73,76 @@ let chromeReady = false;
 
 function log(...a) { console.log('[tp-browserd]', ...a); }
 
+// Identify which Chromium we attached to (so launchers can verify "my daemon + my Chrome").
+// Linux: resolve the process listening on the CDP port via /proc/net/tcp* -> socket inode -> /proc/<pid>/fd.
+// macOS has no /proc. BSD ps clips argv to $COLUMNS unless -ww, which hides --user-data-dir.
+// Runs once per attach; failures just leave pid/userDataDir null.
+function findListenerPid(port) {
+  try {
+    const hex = port.toString(16).toUpperCase().padStart(4, '0');
+    const inodes = new Set();
+    for (const f of ['/proc/net/tcp', '/proc/net/tcp6']) {
+      let txt = ''; try { txt = readFileSync(f, 'utf8'); } catch { continue; }
+      for (const line of txt.split('\n').slice(1)) {
+        const c = line.trim().split(/\s+/);
+        if (c.length > 9 && c[1].endsWith(':' + hex) && c[3] === '0A') inodes.add(c[9]);
+      }
+    }
+    if (!inodes.size) return null;
+    for (const pid of readdirSync('/proc')) {
+      if (!/^\d+$/.test(pid)) continue;
+      let fds; try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+      for (const fd of fds) {
+        let l; try { l = readlinkSync(`/proc/${pid}/fd/${fd}`); } catch { continue; }
+        const m = /^socket:\[(\d+)\]$/.exec(l);
+        if (m && inodes.has(m[1])) return Number(pid);
+      }
+    }
+  } catch {}
+  return null;
+}
+// Exact argv tokens. ps prints one line with spaces, so a value that itself contains
+// spaces cannot be recovered; TP's profile path does not contain spaces.
+function darwinChromeOnPort(port) {
+  try {
+    const r = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 3000 });
+    if (!r.stdout) return null;
+    const portToken = `--remote-debugging-port=${port}`;
+    const dirToken = '--user-data-dir=';
+    for (const line of r.stdout.split('\n')) {
+      const trimmed = line.trim();
+      const sp = trimmed.indexOf(' ');
+      if (sp < 1) continue;
+      const pid = Number(trimmed.slice(0, sp));
+      if (!Number.isInteger(pid)) continue;
+      const parts = trimmed.slice(sp + 1).split(' ').filter(Boolean);
+      if (!parts.includes(portToken)) continue;
+      if (parts.some((p) => p.startsWith('--type='))) continue;
+      const dirArg = parts.find((p) => p.startsWith(dirToken));
+      return { pid, userDataDir: dirArg ? dirArg.slice(dirToken.length) : null };
+    }
+  } catch {}
+  return null;
+}
+function describeChrome(info, wsUrl) {
+  const id = { cdpPort: CHROME_DEBUG_PORT, wsPort: null, browserId: null, product: info?.Browser || null, pid: null, userDataDir: null };
+  try { const u = new URL(wsUrl); id.wsPort = Number(u.port); id.browserId = u.pathname.split('/').pop() || null; } catch {}
+  if (process.platform === 'linux') {
+    id.pid = findListenerPid(CHROME_DEBUG_PORT);
+    if (id.pid) {
+      try {
+        const args = readFileSync(`/proc/${id.pid}/cmdline`, 'utf8').split('\0');
+        const a = args.find((x) => x.startsWith('--user-data-dir='));
+        if (a) id.userDataDir = a.slice('--user-data-dir='.length);
+      } catch {}
+    }
+  } else if (process.platform === 'darwin') {
+    const hit = darwinChromeOnPort(CHROME_DEBUG_PORT);
+    if (hit) { id.pid = hit.pid; id.userDataDir = hit.userDataDir; }
+  }
+  return id;
+}
+
 async function attachChrome() {
   for (;;) {
     try {
@@ -66,9 +152,10 @@ async function attachChrome() {
       if (!wsUrl || !String(wsUrl).startsWith('ws://127.0.0.1:')) throw new Error('unexpected webSocketDebuggerUrl');
       const cdp = new Cdp(wsUrl, 'chrome');
       await cdp.connect();
+      chromeIdentity = describeChrome(info, wsUrl);
       hub = new BrowserHub(cdp, { downloadsDir: DOWNLOADS_DIR, onPush: broadcastPush, daemonPort: PORT });
       log('attached to Chromium:', wsUrl);
-      cdp.onClose(() => { chromeReady = false; hub = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
+      cdp.onClose(() => { chromeReady = false; hub = null; chromeIdentity = null; log('Chromium connection lost; retrying'); setTimeout(attachChrome, 2000); });
       // Restore persistent + promoted session cookies from vault before any navigation
       await hub.restoreVaultToBrowser();
       // wait for target discovery to deliver existing targets first, then prune dead spaces & blank tabs
@@ -107,7 +194,7 @@ async function attachChrome() {
         const savedTabs = hub.getSavedTabs();
         for (const t of savedTabs.slice(0, 4)) {
           if (t?.url && String(t.url).startsWith('https://')) {
-            try { await hub.cdp.send('Target.createTarget', { url: t.url }); } catch {}
+            try { await hub.cdp.send('Target.createTarget', { url: t.url, background: true }); } catch {}
           }
         }
       }
@@ -157,7 +244,8 @@ function checkToken(req) {
   const b = Buffer.from(t);
   return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
 }
-writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
+// daemon.json is written only after listen() succeeds (see bottom), so a daemon that lost the port race
+// can no longer overwrite the record of the daemon that actually owns it.
 
 // ---------- SSE push channels ----------
 const sseClients = new Set();
@@ -166,7 +254,8 @@ function broadcastPush(targetId, kind, payload) {
     if (hub) hub.resetSiteAuth(targetId).catch(() => {});
   }
   if (kind === 'coride' && payload?.mode) {
-    const found = store.findByTargetId(targetId);
+    let found = null;
+    try { found = store.findByTargetId(targetId); } catch {}
     if (found) {
       found.space.ownership = payload.mode === 'human' ? 'user' : 'agent';
       found.space.state = payload.mode === 'human' ? 'handed-off' : 'active';
@@ -264,15 +353,11 @@ const server = createServer(async (req, res) => {
     res.writeHead(403).end('forbidden host/origin');
     return;
   }
-  if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
+  if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length, dataDir: DATA_DIR, port: PORT, cdpPort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: STARTED_AT, chromeIdentity: chromeReady ? chromeIdentity : null })); return; }
   if (url.pathname === '/flush-and-close') {
-    try {
-      if (hub) {
-        await hub.syncVaultNow().catch(() => {});
-        await hub.cdp.send('Browser.close').catch(() => {});
-      }
-    } catch {}
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, flushed: true }));
+    // RG-A6: closing the whole browser needs the same token as /rpc (any local process can reach 127.0.0.1).
+    if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
+    await handleFlushAndClose(hub, res);
     return;
   }
   if (url.pathname === '/events') {
@@ -328,7 +413,8 @@ async function dispatch(method, p) {
       requireHub();
       const sp = resolveSpace(p.idOrName);
       await syncSpaceTargets(sp.id);
-      sp.state = 'active'; store.persist();
+      // RG-A4: re-opening a space must not silently take it back from a human.
+      if (sp.state !== 'handed-off') { sp.state = 'active'; store.persist(); }
       return spaceView(sp.id);
     }
     case 'space.claim':
@@ -337,15 +423,26 @@ async function dispatch(method, p) {
       const sp = store.get(p.id);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
       await syncSpaceTargets(sp.id);
-      sp.state = 'active'; store.persist();
+      sp.state = 'active'; sp.ownership = 'agent'; store.persist();
       return spaceView(sp.id);
     }
     case 'space.handOff': {
       const sp = store.get(p.id);
-      if (sp) { sp.state = 'handed-off'; store.persist(); }
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      sp.state = 'handed-off'; sp.ownership = 'user'; store.persist();
       return { handedOff: true };
     }
-    case 'space.waitForControl': return { control: true };
+    case 'space.waitForControl': {
+      // RG-A4: really wait while a human holds the space. One RPC waits at most 25 s;
+      // the SDK loops so long waits never hit HTTP timeouts.
+      const sp = store.get(p.id);
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      const slice = Math.max(0, Math.min(Number(p.timeout ?? 25000) || 0, 25000));
+      const deadline = Date.now() + slice;
+      while (store.get(p.id)?.state === 'handed-off' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+      const cur = store.get(p.id);
+      return { control: !!cur && cur.state !== 'handed-off', state: cur?.state ?? 'deleted' };
+    }
     case 'space.finish': {
       const h = requireHub();
       const sp = store.get(p.id);
@@ -383,10 +480,10 @@ async function dispatch(method, p) {
       const h = requireHub();
       const sp = store.get(p.spaceId);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.spaceId}`);
-      const t = await h.cdp.send('Target.createTarget', { url: 'about:blank' });
+      const t = await h.cdp.send('Target.createTarget', { url: 'about:blank', background: true });
       const label = p.as || store.nextLabel(sp.id);
       store.addPage(sp.id, label, t.targetId, 'agent');
-      await waitSession(t.targetId);
+      await enableBackgroundInput(t.targetId);
       return { label, targetId: t.targetId };
     }
     case 'page.adopt': {
@@ -411,6 +508,13 @@ async function dispatch(method, p) {
     case 'download.call': return downloadCall(p);
     case 'task.cdp': {
       const h = requireHub();
+      // RG-A4b/A4c: task.cdp is browser-level (it can attach to ANY tab), so the caller-supplied
+      // spaceId cannot be trusted. While any space is held by a human, only read-only browser
+      // metadata methods are allowed.
+      const held = store.list().filter((s) => s.state === 'handed-off');
+      if (held.length && !CDP_ALLOWED_WHILE_HANDED_OFF.has(p.method)) {
+        throw new EgoError('HandedOffError', `space ${held.map((s) => s.id).join(',')} is held by a human; call waitForControl() first (blocked: cdp ${p.method})`);
+      }
       return h.cdp.send(p.method, p.params || {}, { timeout: p.timeout || 30000 });
     }
     case 'page.call': return pageCall(p);
@@ -451,10 +555,10 @@ async function syncSpaceTargets(spaceId) {
       store.bindPage(spaceId, label, reusedTid, pg.openedBy);
       continue;
     }
-    const t = await h.cdp.send('Target.createTarget', { url: 'about:blank' });
+    const t = await h.cdp.send('Target.createTarget', { url: 'about:blank', background: true });
     bound.add(t.targetId);
     store.bindPage(spaceId, label, t.targetId, pg.openedBy);
-    await waitSession(t.targetId);
+    await enableBackgroundInput(t.targetId);
   }
 }
 
@@ -466,11 +570,25 @@ async function waitSession(targetId, tries = 50) {
   throw new EgoError('PageOpenError', `target ${targetId} did not attach`);
 }
 
+// background:true keeps the tab from stealing focus, but Chrome does not
+// composite a hidden tab. mouseMoved then waits on a frame, so an alert is
+// not up for a short poll and the next click interleaves the gesture (no
+// dialog event, no window.open). Focus emulation produces frames without
+// activating the tab.
+async function enableBackgroundInput(targetId) {
+  const st = await waitSession(targetId);
+  await hub.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, { sessionId: st.sessionId }).catch(() => {});
+}
+
 function spaceView(spaceId) {
   const sp = store.get(spaceId);
   const pages = Object.entries(sp.pages).map(([label, pg]) => ({ label, targetId: pg.targetId, url: pg.url || '', title: pg.title || '' }));
   return { id: sp.id, name: sp.name, ownership: sp.ownership, state: sp.state, pages };
 }
+
+const HANDOFF_ALLOWED = new Set(['url', 'title', 'info', 'events', 'noop']);
+// RG-A4d: Target.getTargets/getTargetInfo return every tab's URL and title (may carry OAuth codes or signed links), so they are blocked too.
+const CDP_ALLOWED_WHILE_HANDED_OFF = new Set(['Browser.getVersion', 'SystemInfo.getInfo']);
 
 async function pageCall(p) {
   const h = requireHub();
@@ -479,6 +597,11 @@ async function pageCall(p) {
   const pg = sp.pages[p.label];
   if (!pg) throw new EgoError('UnknownPage', `no page ${p.label} in space ${p.spaceId}`);
   if (!pg.targetId || !h.sessions.has(pg.targetId)) throw new EgoError('PageClosedError', `page ${p.label} is closed`);
+  // RG-A4: while a human holds the space (handOff or capsule "human" mode) the agent may only
+  // read tab metadata; anything that drives or reads page content is refused until control returns.
+  if (sp.state === 'handed-off' && !HANDOFF_ALLOWED.has(p.method)) {
+    throw new EgoError('HandedOffError', `space ${sp.id} is held by a human; call waitForControl() first (blocked: page.${p.method})`);
+  }
   const tid = pg.targetId;
   const [method, ...args] = [p.method, ...(p.args || [])];
   sp.activeTargetId = tid;
@@ -672,9 +795,20 @@ async function downloadCall(p) {
   }
 }
 
-server.listen(PORT, '127.0.0.1', () => {
-  log(`rpc: http://127.0.0.1:${PORT}/rpc  events: /events  (token at ${tokenPath()})`);
-  log(`data dir: ${DATA_DIR}`);
+server.on('error', (e) => {
+  if (e && e.code === 'EADDRINUSE') {
+    console.error(`[tp-browserd] FATAL: EADDRINUSE 127.0.0.1:${PORT} is already in use by another process; not starting (data dir ${DATA_DIR}, wanted CDP ${CHROME_DEBUG_PORT}). Pick a free EGO_BROWSERD_PORT.`);
+    process.exit(98);
+  }
+  console.error(`[tp-browserd] FATAL: listen 127.0.0.1:${PORT} failed: ${e?.code || ''} ${e?.message || e}`);
+  process.exit(1);
 });
-attachChrome();
+server.listen(PORT, '127.0.0.1', () => {
+  writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: STARTED_AT }, null, 1), { mode: 0o600 });
+  log(`rpc: http://127.0.0.1:${PORT}/rpc  events: /events  (token at ${tokenPath()})`);
+  log(`data dir: ${DATA_DIR}  cdp: 127.0.0.1:${CHROME_DEBUG_PORT}`);
+  // Attach to Chromium only once we own the port: a daemon that loses the port race must not touch the browser
+  // (previously it attached, restored the cookie vault and navigated tabs before crashing on EADDRINUSE).
+  attachChrome();
+});
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { log('shutting down'); process.exit(0); });

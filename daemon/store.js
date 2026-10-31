@@ -70,5 +70,14 @@ export class Store {
     delete s.pages[label];
     this.persist();
   }
+  findByTargetId(targetId) {
+    if (!targetId) return null;
+    for (const space of this.list()) {
+      for (const [label, page] of Object.entries(space.pages || {})) {
+        if (page && page.targetId === targetId) return { space, label, page };
+      }
+    }
+    return null;
+  }
   deleteSpace(id) { delete this.data.spaces[id]; this.persist(); }
 }

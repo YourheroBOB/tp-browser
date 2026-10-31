@@ -99,7 +99,11 @@ if (-not $Restart) {
 }
 
 # 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes
-try { Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+$TokenFile = Join-Path $DataDir "token"
+if (Test-Path $TokenFile) {
+    $TpToken = (Get-Content -Raw -Path $TokenFile).Trim()
+    try { Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$DaemonPort/flush-and-close" -Headers @{ 'x-tp-token' = $TpToken } -TimeoutSec 3 | Out-Null } catch {}
+}
 Start-Sleep -Milliseconds 1000
 
 Get-CimInstance Win32_Process | Where-Object {

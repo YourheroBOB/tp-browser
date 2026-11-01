@@ -377,16 +377,37 @@ async function dispatch(method, p) {
       const sp = store.get(p.id);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
       const keep = Array.isArray(p.keep) ? p.keep : p.keep === 'all' ? Object.keys(sp.pages) : [];
+      const labels = Object.keys(sp.pages);
+      const keepSet = new Set(keep);
+      // A label in `keep` that this space never had means the caller asked to keep a
+      // tab that does not exist; report it instead of silently ignoring it.
+      const missing = [...new Set(keep.filter((label) => !labels.includes(label)))];
+      const retained = [...new Set(labels.filter((label) => keepSet.has(label)))];
       const closed = [];
-      for (const label of Object.keys(sp.pages)) {
-        if (keep.includes(label)) continue;
+      const failed = [];
+      for (const label of labels) {
+        if (keepSet.has(label)) continue;
         const pg = sp.pages[label];
-        if (pg.targetId) { try { await h.cdp.send('Target.closeTarget', { targetId: pg.targetId }); } catch {} }
+        const targetId = pg && pg.targetId;
+        let closeFailed = false;
+        if (targetId) {
+          try { await h.cdp.send('Target.closeTarget', { targetId }); } catch { closeFailed = true; }
+        }
+        // The tab is gone (closed, never bound, or already detached): drop the ledger
+        // entry and persist, otherwise a later space.tabs/space.use resurrects a dead
+        // targetId that no longer exists in the browser.
+        // If the close genuinely failed while the target is still attached, keep the
+        // record so the next finish() can retry instead of leaking an untracked tab.
+        if (closeFailed && targetId && h.sessions.has(targetId)) { failed.push(label); continue; }
+        try { store.removePage(sp.id, label); } catch {}
         closed.push(label);
       }
       let deleted = false;
-      if (keep.length === 0) { store.deleteSpace(sp.id); deleted = true; }
-      return { retained: keep, closed, deleted };
+      if (retained.length === 0) { store.deleteSpace(sp.id); deleted = true; }
+      store.persist();
+      const out = { retained, closed, missing, deleted };
+      if (failed.length > 0) out.failed = failed;
+      return out;
     }
     case 'space.tabs': {
       const h = requireHub();

@@ -92,12 +92,22 @@ export class Store {
     const s = this.get(spaceId);
     if (!s) return 'p?';
     // labelSeq 也只認自有鍵：繼承鍵（例如 'toString'）會讀到函式並寫出一筆孤兒序號，
-    // 讓 ledger 只增不減。
-    const seq = this.data.labelSeq;
+    // 讓 ledger 只增不減。舊版／手編 ledger 也可能整塊缺少 labelSeq，此時補一個空
+    // 物件，而不是讓 nextLabel 拋 TypeError。
+    const seq = this.data.labelSeq ?? (this.data.labelSeq = {});
     const current = Object.hasOwn(seq, spaceId) ? seq[spaceId] : undefined;
-    seq[spaceId] = (current ?? 1) + 1;
+    const parsed = typeof current === 'number' ? current : Number(current);
+    // 只依 labelSeq 遞增會撞上已存在的分頁：addPage／bindPage／adopt 可能先用自訂
+    // label 'p2' 佔用，此時若照舊回 'p2'，呼叫端 addPage 會直接覆蓋那個分頁的 targetId。
+    // 因此從 labelSeq 續號後，逐一跳過 space 內「已存在」的 pN 標籤（只認 pages 自有鍵，
+    // 避免繼承鍵誤判），並把 labelSeq 推進到實際發出的號碼；labelSeq 落後於實際 pN 標籤
+    // 的舊 ledger 重載後也一樣不會再撞。
+    let n = (Number.isInteger(parsed) && parsed >= 1 ? parsed : 1) + 1;
+    const pages = s.pages !== null && typeof s.pages === 'object' && !Array.isArray(s.pages) ? s.pages : {};
+    while (Object.hasOwn(pages, `p${n}`)) n += 1;
+    seq[spaceId] = n;
     this.persist();
-    return `p${seq[spaceId]}`;
+    return `p${n}`;
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);

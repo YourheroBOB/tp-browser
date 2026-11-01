@@ -145,6 +145,11 @@ export class Cdp {
 
 export const once = (cdp, method, { sessionId, timeout = 30000 } = {}) =>
   new Promise((resolve, reject) => {
+    // 已關閉的連線不會再有事件：立即拒絕，不註冊任何 handler 或計時器。
+    if (cdp.closed) {
+      reject(new Error(`CDP connection closed while waiting for ${method}`));
+      return;
+    }
     let offEvent = () => {};
     let offClose = () => {};
     let timer = null;

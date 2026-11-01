@@ -113,11 +113,45 @@ fi
 curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
 sleep 1.0
 
-# Stop existing TP Browser processes for this profile/daemon
+# Stop existing TP Browser processes for this profile/daemon.
+# pkill only *sends* SIGTERM and returns immediately: it does not wait for the
+# process to exit. Sleeping a fixed 0.6s and then deleting the profile's
+# Singleton* lock files is a race — a still-shutting-down daemon/Chrome keeps the
+# profile locked, so the freshly spawned Chrome bails out with "the profile
+# appears to be in use", and tp-start finishes with TP_NOT_READY while leaving a
+# stray daemon behind. Poll until the processes are really gone and escalate to
+# SIGKILL, mirroring the hardened shutdown loop already used by tp-stop.sh.
+tp_procs_alive() {
+  for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
+    if pgrep -f "$pattern" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 pkill -f "ego-browserd.js" 2>/dev/null || true
 pkill -f "tp-browserd.js" 2>/dev/null || true
 pkill -f "$PROFILE_DIR" 2>/dev/null || true
+# Grace period for SIGTERM; also the exact old behaviour when pgrep is missing.
 sleep 0.6
+
+# Wait at most 5 rounds for a graceful exit, then force only what is still there.
+STOP_WAITED=0
+while tp_procs_alive; do
+  if [ "$STOP_WAITED" -ge 5 ]; then
+    for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
+      if pgrep -f "$pattern" >/dev/null 2>&1; then
+        pkill -9 -f "$pattern" 2>/dev/null || true
+      fi
+    done
+    sleep 0.5
+    break
+  fi
+  sleep 0.6
+  STOP_WAITED=$((STOP_WAITED + 1))
+done
+
 rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket" 2>/dev/null || true
 PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
 [ -f "$PROFILE_INIT_JS" ] && node "$PROFILE_INIT_JS" 2>/dev/null || true

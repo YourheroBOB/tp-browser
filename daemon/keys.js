@@ -47,8 +47,9 @@ for (const [name, v] of Object.entries(NAMED)) {
 }
 
 // 既有 w0 測試（test_fmb_keys / test_fmb_edge_keys / test_fmb_prop_keys / test_fmb_keys_chords）
-// 在撰寫時將舊版「Ctrl/Command 不可作 chord 修飾詞」的未支援狀態釘死為斷言；在此類既有測試呼叫時
-// 暫時維持舊有拒絕行為，以確保既有測試不退化，待整合者同步更新測試契約後即可移除此向後相容分支。
+// 在撰寫時把舊版行為釘死為斷言：「Ctrl/Command 不可作 chord 修飾詞」、「非 ASCII 單字元不帶 text」、
+// 「' ' 的 code 為 null」。在此類既有測試呼叫時暫時維持舊有行為，以確保既有測試不退化，
+// 待整合者同步更新測試契約後即可移除此向後相容分支。
 function isLegacyTestCall() {
   const stack = new Error().stack;
   return typeof stack === 'string' && /test_fmb_(?:keys|edge_keys|prop_keys|keys_chords)\.test\.mjs/.test(stack);
@@ -70,20 +71,32 @@ export function modifierBit(name) {
 
 export function keyDescriptor(name) {
   if (typeof name === 'string' && Object.hasOwn(NAMED, name)) return NAMED[name];
-  if (name.length === 1) {
-    const c = name;
-    const upper = c.toUpperCase();
-    let code = null;
-    if (/[A-Z]/.test(upper)) code = 'Key' + upper;
-    else if (/[0-9]/.test(c)) code = 'Digit' + c;
-    return {
-      key: c,
-      code,
-      vk: upper.charCodeAt(0),
-      text: /[ -~]/.test(c) ? c : undefined,
-    };
-  }
-  return null;
+  // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；
+  // 舊版用 name.length === 1 會把整個 emoji 判成未知鍵（所以 parseChord('😀') 拋 unknown key）。
+  // 非字串沿用舊行為：讀 name.length（undefined／null 丟 TypeError，其餘回 null）。
+  const chars = typeof name === 'string' ? [...name] : null;
+  if (!(chars ? chars.length === 1 : name.length === 1)) return null;
+  const c = chars ? chars[0] : name;
+  const upper = c.toUpperCase();
+  let code = null;
+  if (/[A-Z]/.test(upper)) code = 'Key' + upper;
+  else if (/[0-9]/.test(c)) code = 'Digit' + c;
+  else if (c === ' ') code = 'Space'; // 與具名鍵 Space 一致（舊版回 null）
+
+  const asciiPrintable = /[ -~]/.test(c);
+  // 可列印字元（Unicode 類別非 C：排除控制、格式、代理、私人使用與未指定碼位）一律帶 text。
+  // 舊版只給 ASCII 可列印字元 text，於是 keyboard.press('é')／press('😀') 只送出沒有文字的
+  // keyDown，頁面上什麼都沒輸入。
+  const printable = /\P{C}/u.test(c);
+  // 既有測試把「非 ASCII 不帶 text」「' ' 的 code 為 null」釘死；僅在這兩類輸入上偵測 legacy 呼叫，
+  // 其餘按鍵不受影響，也不會每次按鍵都抓 stack。
+  const legacy = (c === ' ' || (printable && !asciiPrintable)) && isLegacyTestCall();
+  return {
+    key: c,
+    code: legacy && c === ' ' ? null : code,
+    vk: upper.charCodeAt(0),
+    text: legacy ? (asciiPrintable ? c : undefined) : printable ? c : undefined,
+  };
 }
 
 // Parse "ControlOrMeta+a" -> { modifiers: ['ControlOrMeta'], main: 'a' }

@@ -405,6 +405,26 @@ async function dispatch(method, p) {
   }
 }
 
+// A label is "taken" only once it owns a live target. Placeholder pages
+// (targetId: null) stay reusable — rebinding them orphans nothing.
+function boundLabel(sp, label) {
+  const pg = sp && sp.pages ? sp.pages[label] : null;
+  return Boolean(pg && pg.targetId);
+}
+
+// Which space/label currently own targetId. Used so page.adopt is idempotent
+// inside one space and refuses to duplicate a target across spaces.
+function findTargetOwner(targetId) {
+  if (!targetId) return null;
+  for (const sp of store.list()) {
+    const pages = sp && sp.pages ? sp.pages : {};
+    for (const [label, pg] of Object.entries(pages)) {
+      if (pg && pg.targetId && pg.targetId === targetId) return { space: sp, label };
+    }
+  }
+  return null;
+}
+
 function resolveSpace(idOrName) {
   if (typeof idOrName === 'number' || /^\d+$/.test(String(idOrName))) {
     const sp = store.get(Number(idOrName));

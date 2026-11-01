@@ -90,13 +90,18 @@
     return '';
   }
 
+  // Inside a double-quoted selector argument (text="...") a backslash escapes the
+  // next character; the matcher must compare against the unescaped text, otherwise
+  // text="say \"hi\"" would look for a literal backslash on the page and never match.
+  const unescapeQuoted = (s) => s.replace(/\\(.)/g, '$1');
+
   function parseSelector(sel) {
     // returns {kind, ...}
     let m;
     if ((m = sel.match(/^@(\d+)$/)) || (m = sel.match(/^ref=(\d+)$/))) return { kind: 'ref', ref: +m[1] };
     // text=... >> nth=N must run before the plain text= prefix, which would swallow the suffix.
     if ((m = sel.match(/^text=(?:"((?:[^"\\]|\\.)*)"|([^">]+))\s*>>\s*nth=(-?\d+)$/))) {
-      return { kind: 'text', value: m[1] !== undefined ? m[1] : m[2].trim(), exact: m[1] !== undefined, nth: parseInt(m[3], 10) };
+      return { kind: 'text', value: m[1] !== undefined ? unescapeQuoted(m[1]) : m[2].trim(), exact: m[1] !== undefined, nth: parseInt(m[3], 10) };
     }
     if (sel.startsWith('text=') && sel.includes('>> nth=')) {
       const [a, b] = sel.split('>>');
@@ -104,7 +109,7 @@
     }
     if (sel.startsWith('text=')) {
       const t = sel.slice(5);
-      if (t.length > 1 && t.startsWith('"') && t.endsWith('"')) return { kind: 'text', value: t.slice(1, -1), exact: true };
+      if (t.length > 1 && t.startsWith('"') && t.endsWith('"')) return { kind: 'text', value: unescapeQuoted(t.slice(1, -1)), exact: true };
       return { kind: 'text', value: t, exact: false };
     }
     if (sel.startsWith('loc=role:')) {
@@ -354,20 +359,30 @@
     return String(t.value ?? '') === String(value);
   }
 
+  function describePick(pick) {
+    if (typeof pick === 'number') return `index ${pick}`;
+    if (pick && typeof pick === 'object') return JSON.stringify(pick);
+    return JSON.stringify(String(pick));
+  }
+
   function selectOptions(hid, picks) {
     const el = elOf(hid);
     if (!el || el.tagName !== 'SELECT') return { ok: false, error: 'not a select' };
     const opts = Array.from(el.options);
+    const wanted = Array.isArray(picks) ? picks : [picks];
     const chosen = [];
-    for (const pick of picks) {
+    // All-or-nothing: a pick that matches no option must fail loudly instead of
+    // silently clearing the current selection (single select) or half-applying it.
+    for (const pick of wanted) {
       let o = null;
-      if (typeof pick === 'number') o = opts[pick];
+      if (typeof pick === 'number') o = opts[pick] || null;
       else if (pick && typeof pick === 'object') {
         o = opts.find((x) => (pick.value !== undefined && x.value === pick.value) || (pick.label !== undefined && norm(x.textContent) === norm(pick.label))) || null;
       } else {
         o = opts.find((x) => x.value === pick) || opts.find((x) => norm(x.textContent) === norm(pick)) || null;
       }
-      if (o) chosen.push(o);
+      if (!o) return { ok: false, error: 'no option matches ' + describePick(pick) };
+      chosen.push(o);
     }
     if (!el.multiple) { el.value = chosen.length ? chosen[0].value : ''; }
     else { for (const o of opts) o.selected = chosen.includes(o); }

@@ -33,43 +33,74 @@ $DaemonPort = if ($UseAlt) { 9774 } else { 9772 }
 $ChromePort = if ($UseAlt) { 9775 } else { 9773 }
 
 # 2. Discover preferred Windows Chromium-based browser binary (Edge vs Chrome)
-$BrowserBin = $env:TP_BROWSER_BIN
-if (-not $BrowserBin -or -not (Test-Path $BrowserBin)) {
-    $ChromePaths = @(
-        "C:\Program Files\Google\Chrome\Application\chrome.exe",
-        "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
-    )
-    $EdgePaths = @(
-        "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        "C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        "$env:LOCALAPPDATA\Microsoft\Edge\Application\msedge.exe"
-    )
-    $BravePaths = @(
-        "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
-    )
-
-    $PreferEdge = [bool]$Edge
-    if (-not $Edge -and -not $Chrome) {
-        $EdgeBm = Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\Default\Bookmarks"
-        $ChromeBm = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Bookmarks"
-        $EdgeSz = if (Test-Path $EdgeBm) { (Get-Item $EdgeBm).Length } else { 0 }
-        $ChromeSz = if (Test-Path $ChromeBm) { (Get-Item $ChromeBm).Length } else { 0 }
-        if ($EdgeSz -gt $ChromeSz) { $PreferEdge = $true }
+#    Fail loudly instead of silently switching browsers: an explicitly configured
+#    TP_BROWSER_BIN must exist, and -Edge / -Chrome restrict the search to that
+#    browser's own path list. All of these checks run BEFORE any flush-and-close
+#    or Stop-Process below, so a wrong browser never touches a live profile.
+function Test-BrowserBinPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        return [bool](Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)
+    } catch {
+        return $false
     }
+}
 
-    $Candidates = if ($PreferEdge) { $EdgePaths + $ChromePaths + $BravePaths } else { $ChromePaths + $EdgePaths + $BravePaths }
-    foreach ($c in $Candidates) {
-        if ($c -and (Test-Path $c)) {
+$ChromePaths = @(
+    "C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+)
+$EdgePaths = @(
+    "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    "$env:LOCALAPPDATA\Microsoft\Edge\Application\msedge.exe"
+)
+$BravePaths = @(
+    "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+)
+
+$BrowserBin = $env:TP_BROWSER_BIN
+if (-not ([string]::IsNullOrWhiteSpace($BrowserBin))) {
+    if (-not (Test-BrowserBinPath -Path $BrowserBin)) {
+        [Console]::Error.WriteLine("ERROR: TP_BROWSER_BIN is set to '$BrowserBin' but that path does not exist. No Chrome or Edge binary is available at TP_BROWSER_BIN; refusing to fall back to a different browser.")
+        exit 1
+    }
+} elseif ($Edge -and $Chrome) {
+    [Console]::Error.WriteLine("ERROR: -Edge and -Chrome must not be combined; refusing to guess which browser profile to open.")
+    exit 1
+} elseif ($Edge -or $Chrome) {
+    $ExplicitBrowser = if ($Edge) { "Edge" } else { "Chrome" }
+    $ExplicitPaths = if ($Edge) { $EdgePaths } else { $ChromePaths }
+    foreach ($c in $ExplicitPaths) {
+        if (Test-BrowserBinPath -Path $c) {
             $BrowserBin = $c
             break
         }
     }
-}
+    if (-not (Test-BrowserBinPath -Path $BrowserBin)) {
+        [Console]::Error.WriteLine("ERROR: -$ExplicitBrowser was requested but no $ExplicitBrowser binary was found in its known install paths; refusing to fall back to a different browser.")
+        exit 1
+    }
+} else {
+    $PreferEdge = $false
+    $EdgeBm = Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\Default\Bookmarks"
+    $ChromeBm = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Bookmarks"
+    $EdgeSz = if (Test-Path $EdgeBm) { (Get-Item $EdgeBm).Length } else { 0 }
+    $ChromeSz = if (Test-Path $ChromeBm) { (Get-Item $ChromeBm).Length } else { 0 }
+    if ($EdgeSz -gt $ChromeSz) { $PreferEdge = $true }
 
-if (-not $BrowserBin -or -not (Test-Path $BrowserBin)) {
-    [Console]::Error.WriteLine("ERROR: No Chrome or Edge binary found on this Windows machine!")
-    exit 1
+    $Candidates = if ($PreferEdge) { $EdgePaths + $ChromePaths + $BravePaths } else { $ChromePaths + $EdgePaths + $BravePaths }
+    foreach ($c in $Candidates) {
+        if (Test-BrowserBinPath -Path $c) {
+            $BrowserBin = $c
+            break
+        }
+    }
+    if (-not (Test-BrowserBinPath -Path $BrowserBin)) {
+        [Console]::Error.WriteLine("ERROR: No Chrome or Edge binary found on this Windows machine!")
+        exit 1
+    }
 }
 $TargetExeName = Split-Path $BrowserBin -Leaf
 

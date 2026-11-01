@@ -2,7 +2,7 @@
 // Automatically initializes `profile-agent/Default/Preferences` to always show the
 // native Bookmarks Bar (`bookmark_bar.show_on_all_tabs = true`), enable session persistence,
 // and import the user's existing local browser Bookmarks, Favicons, Saved Logins, Local Storage & IndexedDB.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -65,6 +65,34 @@ function dirSize(dir) {
     }
   } catch {}
   return total;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Return the source browser's `os_crypt` only when the destination can actually decrypt
+// cookies with it. Missing file, invalid JSON, `null`, an array or an empty
+// `encrypted_key` all mean "not usable" — in that case Cookies must not be replaced.
+function readSourceOsCrypt(localStatePath) {
+  if (!existsSync(localStatePath)) return null;
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(localStatePath, 'utf8')); } catch { return null; }
+  if (!isPlainObject(parsed)) return null;
+  const osCrypt = parsed.os_crypt;
+  if (!isPlainObject(osCrypt)) return null;
+  if (typeof osCrypt.encrypted_key !== 'string' || osCrypt.encrypted_key === '') return null;
+  return osCrypt;
+}
+
+// The destination Local State can be `null`, an array or a scalar after a partial/corrupt
+// write. Start from a fresh object in those cases so `os_crypt` is never silently dropped
+// (assigning onto `null` throws, and a property hung on an array is lost by JSON.stringify).
+function readDestinationLocalState(localStatePath) {
+  if (!existsSync(localStatePath)) return {};
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(localStatePath, 'utf8')); } catch { return {}; }
+  return isPlainObject(parsed) ? parsed : {};
 }
 
 const dstBookmarks = join(profileDef, 'Bookmarks');
@@ -164,33 +192,40 @@ if (bestCandidate) {
     }
   }
 
-  // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny
+  // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny.
+  // The source key is read and validated *before* any file is replaced: copying Cookies first
+  // and failing to write os_crypt leaves cookies encrypted with a key the destination does not
+  // have, and once the destination Cookies reach 64 KB the sync never retries (permanent loss).
   const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
     ? join(bestCandidate.profDir, 'Network', 'Cookies')
     : join(bestCandidate.profDir, 'Cookies');
   const dstCookiesDir = process.platform === 'win32' ? join(profileDef, 'Network') : profileDef;
   const dstCookies = join(dstCookiesDir, 'Cookies');
   if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
-    try {
-      mkdirSync(dstCookiesDir, { recursive: true });
-      for (const ext of ['-journal', '-wal', '-shm']) {
-        try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
-      }
-      copyFileSync(srcCookies, dstCookies);
-      const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
-      const dstLocalStatePath = join(profileRoot, 'Local State');
-      if (existsSync(srcLocalStatePath)) {
-        const srcLs = JSON.parse(readFileSync(srcLocalStatePath, 'utf8'));
-        let dstLs = {};
-        if (existsSync(dstLocalStatePath)) {
-          try { dstLs = JSON.parse(readFileSync(dstLocalStatePath, 'utf8')); } catch { dstLs = {}; }
+    const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
+    const dstLocalStatePath = join(profileRoot, 'Local State');
+    const srcOsCrypt = readSourceOsCrypt(srcLocalStatePath);
+    if (!srcOsCrypt) {
+      console.log('Skipped Cookies sync: source Local State has no usable os_crypt');
+    } else {
+      // Stage the copy next to the destination, write os_crypt, then swap in the new DB so a
+      // failure at any step leaves the previous Cookies/Local State pair intact.
+      const tmpCookies = `${dstCookies}.fmb-sync-tmp`;
+      try {
+        mkdirSync(dstCookiesDir, { recursive: true });
+        copyFileSync(srcCookies, tmpCookies);
+        const dstLs = readDestinationLocalState(dstLocalStatePath);
+        dstLs.os_crypt = srcOsCrypt;
+        writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
+        for (const ext of ['-journal', '-wal', '-shm']) {
+          try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
         }
-        if (srcLs.os_crypt) {
-          dstLs.os_crypt = srcLs.os_crypt;
-          writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
-        }
+        renameSync(tmpCookies, dstCookies);
+        console.log(`Synced Cookies (${Math.round(fileSize(srcCookies) / 1024)} KB) + Local State os_crypt from: ${srcCookies}`);
+      } catch {
+        try { if (existsSync(tmpCookies)) unlinkSync(tmpCookies); } catch {}
       }
-    } catch {}
+    }
   }
 
   // Sync Local Storage leveldb if profile-agent Local Storage is empty/small (< 2 MB vs larger source)

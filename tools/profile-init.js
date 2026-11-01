@@ -18,16 +18,21 @@ let prefs = {};
 if (existsSync(prefsPath)) {
   try { prefs = JSON.parse(readFileSync(prefsPath, 'utf8')); } catch { prefs = {}; }
 }
-if (prefs === null || typeof prefs !== 'object' || Array.isArray(prefs) ||
-    Object.getPrototypeOf(prefs) !== Object.prototype) {
-  prefs = {};
-}
-if (!prefs.bookmark_bar || typeof prefs.bookmark_bar !== 'object') prefs.bookmark_bar = {};
+// Chromium expects these sections to be plain JSON objects. `typeof []` is also
+// 'object', so an array would silently swallow the properties set below
+// (JSON.stringify drops non-index keys) — rebuild anything that is not a plain object.
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) &&
+  (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+
+if (!isPlainObject(prefs)) prefs = {};
+if (!isPlainObject(prefs.bookmark_bar)) prefs.bookmark_bar = {};
 prefs.bookmark_bar.show_on_all_tabs = true;
-if (!prefs.session || typeof prefs.session !== 'object') prefs.session = {};
+if (!isPlainObject(prefs.session)) prefs.session = {};
 prefs.session.restore_on_startup = 1;
-if (!prefs.profile || typeof prefs.profile !== 'object') prefs.profile = {};
-if (!prefs.profile.name || prefs.profile.name === 'Person 1' || prefs.profile.name === '第一位使用者') {
+if (!isPlainObject(prefs.profile)) prefs.profile = {};
+const profileName = prefs.profile.name;
+if (typeof profileName !== 'string' || profileName.trim() === '' ||
+    profileName === 'Person 1' || profileName === '第一位使用者') {
   prefs.profile.name = '⚡ TooPower';
 }
 prefs.profile.exit_type = 'Normal';

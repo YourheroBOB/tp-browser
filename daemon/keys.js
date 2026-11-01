@@ -78,8 +78,14 @@ export function keyDescriptor(name) {
   if (!(chars ? chars.length === 1 : name.length === 1)) return null;
   const c = chars ? chars[0] : name;
   const upper = c.toUpperCase();
+  // 只採用「單一碼位」的大寫對應來推導實體鍵碼：多數單一字元的大寫是單一碼位，但
+  // 'ß'.toUpperCase() 是 'SS'、'ﬀ' 是 'FF'、'ΐ' 是 'Ϊ' + 組合重音、'ǰ' 是 'J' + ˇ。
+  // 若直接拿多碼位的結果推導，會得到不存在的 code（'KeySS'）與借來的 vk（'S' = 83），
+  // dispatch 出去頁面收到的是別的按鍵。這類字元沒有實體按鍵，比照其他非 ASCII 字元：
+  // code 回 null、vk 用自身碼位（CharCode 仍為整數）。
+  const keyChar = upper.length === 1 ? upper : c;
   let code = null;
-  if (/[A-Z]/.test(upper)) code = 'Key' + upper;
+  if (/[A-Z]/.test(keyChar)) code = 'Key' + keyChar;
   else if (/[0-9]/.test(c)) code = 'Digit' + c;
   else if (c === ' ') code = 'Space'; // 與具名鍵 Space 一致（舊版回 null）
 
@@ -94,7 +100,7 @@ export function keyDescriptor(name) {
   return {
     key: c,
     code: legacy && c === ' ' ? null : code,
-    vk: upper.charCodeAt(0),
+    vk: keyChar.charCodeAt(0),
     text: legacy ? (asciiPrintable ? c : undefined) : printable ? c : undefined,
   };
 }

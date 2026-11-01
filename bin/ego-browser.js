@@ -278,6 +278,17 @@ function thrownStack(value) {
   }
 }
 
+// ── 暫存執行目錄清理（fan-out w9/s08）────────────────────────────────
+// `nodejs` 子指令會把使用者腳本寫進 mkdtempSync() 產生的 tp-run-XXXX/script.mjs 再動態 import。
+// 這份檔案是「腳本原文」，可能帶帳密、token 或內網網址；舊寫法只在 finally 裡 rmSync，
+// 而使用者腳本只要在 import 期間同步呼叫 process.exit()，Node 不會展開堆疊、finally 永不執行，
+// 暫存目錄就永久留在 TMPDIR，而且每次執行都多留一份。
+// 'exit' 事件在 process.exit() 與正常結束時都會觸發，且該階段只允許同步工作，rmSync 正好合用。
+function removeTmpRunDir(dir) {
+  if (!dir) return;
+  try { rmSync(dir, { recursive: true, force: true }); } catch {}
+}
+
 async function runNodeJs(args) {
   let code = null;
   if (args[0] === '-e') {
@@ -305,7 +316,7 @@ async function runNodeJs(args) {
       process.exit(2);
     });
   }
-  code = String(code || '').replace(/^\uFEFF/, '');
+  code = String(code || '').replace(/^﻿/, '');
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {
@@ -327,6 +338,12 @@ async function runNodeJs(args) {
   // 例外會往外丟，finally 不會執行，0700 的暫存目錄就永遠留在 tmpdir 裡沒人清。
   let tmpDir = null;
   let exitCode = 0;
+  // 使用者腳本可能在 import 期間同步呼叫 process.exit()（例如 `-e 'process.exit(3)'`）：
+  // process.exit() 不展開堆疊，finally 永遠不會執行，於是含腳本原文（可能帶帳密或網址）的
+  // tp-run-XXXX/script.mjs 永久留在 TMPDIR。建立目錄後立刻掛上同步清理，
+  // finally 也改用同一套機制（rmSync force:true ⇒ 重複清理安全冪等；
+  // 刻意不 removeListener：萬一第一次清理失敗，程序 exit 時還有第二次機會）。
+  process.on('exit', () => { removeTmpRunDir(tmpDir); });
   try {
     tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
     const tmp = join(tmpDir, 'script.mjs');
@@ -345,9 +362,7 @@ async function runNodeJs(args) {
       // 連 stderr 都寫不出去時，仍然要讓程序結束，不能卡在事件迴圈裡。
     }
   } finally {
-    if (tmpDir) {
-      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    }
+    removeTmpRunDir(tmpDir);
   }
   // The SSE event stream keeps the event loop alive; a CLI must exit explicitly.
   // 使用者腳本可以用 `process.exitCode = N` 表示失敗（這是不截斷 stdout 的安全慣例）；

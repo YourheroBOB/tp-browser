@@ -37,20 +37,33 @@ else
 fi
 
 # Check if running inside WSL2 and --headed is requested -> delegate to Windows desktop GUI browser!
-if [ "$HEADED" -eq 1 ] && [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
-  WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+# Test hooks (behaviour is byte-identical when unset): TP_START_PROC_VERSION overrides
+# the kernel-version source file, TP_START_WIN_PS the Windows powershell.exe path and
+# TP_START_WIN_USERS the Windows Users root, so the delegation branch can be exercised
+# without a real /mnt/c mount.
+PROC_VERSION_SRC="${TP_START_PROC_VERSION:-/proc/version}"
+WIN_PS="${TP_START_WIN_PS:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
+WIN_USERS_ROOT="${TP_START_WIN_USERS:-/mnt/c/Users}"
+if [ "$HEADED" -eq 1 ] && [ -f "$PROC_VERSION_SRC" ] && grep -qi microsoft "$PROC_VERSION_SRC" 2>/dev/null; then
   WIN_EGO_DIR=""
-  for d in /mnt/c/Users/*/.local/share/ego-linux; do
+  for d in "$WIN_USERS_ROOT"/*/.local/share/ego-linux; do
     if [ -f "$d/scripts/ego-start.ps1" ]; then WIN_EGO_DIR="$d"; break; fi
   done
   if [ -x "$WIN_PS" ] && [ -n "$WIN_EGO_DIR" ]; then
     WIN_USER="$(basename "$(dirname "$(dirname "$(dirname "$WIN_EGO_DIR")")")")"
     WIN_SCRIPT="C:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
+    # Forward every mode flag the user asked for. Dropping -AltPort here made the
+    # Windows daemon come up on 9772/9773 (or its own 9773-derived group) instead of
+    # the requested 9774/9775 — and that wrong daemon.json was then copied back to
+    # Linux below.
+    set -- -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed
     if [ "$RESTART" -eq 1 ]; then
-      "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed -Restart
-    else
-      "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$WIN_SCRIPT" -Headed
+      set -- "$@" -Restart
     fi
+    if [ "$ALT_PORT" -eq 1 ]; then
+      set -- "$@" -AltPort
+    fi
+    "$WIN_PS" "$@"
     [ -f "$WIN_EGO_DIR/daemon.json" ] && cp -f "$WIN_EGO_DIR/daemon.json" "$DATA_DIR/daemon.json"
     [ -f "$WIN_EGO_DIR/token" ] && cp -f "$WIN_EGO_DIR/token" "$DATA_DIR/token"
     chmod 600 "$DATA_DIR/token" "$DATA_DIR/daemon.json" 2>/dev/null || true

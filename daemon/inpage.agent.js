@@ -221,7 +221,14 @@
         break;
       }
       case 'xpath': {
-        const xr = document.evaluate(spec.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        // document.evaluate() throws on a malformed expression; mirror the css branch
+        // and surface it as a selector error instead of letting it escape to the caller.
+        let xr = null;
+        try {
+          xr = document.evaluate(spec.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        } catch {
+          return { els: [], spec, error: 'invalid selector' };
+        }
         for (let i = 0; i < xr.snapshotLength; i++) els.push(xr.snapshotItem(i));
         break;
       }
@@ -348,7 +355,10 @@
     if (!el) return { ok: false, error: 'stale handle' };
     let target = el;
     if (target.tagName === 'LABEL' && target.control) target = target.control;
-    el.focus && el.focus();
+    // Focus the element that actually receives text. For a <label> that is its control;
+    // focusing the label itself would send the following insertText to the label node.
+    const focusTarget = target.focus ? target : el;
+    if (focusTarget.focus) focusTarget.focus();
     if (target.isContentEditable) {
       target.textContent = '';
       return { ok: true, editable: true };

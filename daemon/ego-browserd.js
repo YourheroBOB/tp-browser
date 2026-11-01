@@ -6,7 +6,7 @@
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -144,19 +144,36 @@ function requireHub() {
 
 // ---------- auth ----------
 function tokenPath() { return join(DATA_DIR, 'token'); }
+// A missing, empty or whitespace-only token file is regenerated instead of being used
+// as-is: with TOKEN === '' the old checkToken() compared two zero-length Buffers and
+// timingSafeEqual(Buffer.alloc(0), Buffer.alloc(0)) is true, so every caller that simply
+// omitted the token header was authenticated (full local bypass of /rpc and /events).
+// The file is also forced back to 0600, because writeFileSync() only applies `mode` when
+// it creates the file — a pre-existing token with looser bits stayed world-readable.
 function ensureToken() {
   const p = tokenPath();
-  if (!existsSync(p)) {
-    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(p, randomBytes(24).toString('hex'), { mode: 0o600 });
+  let tok = '';
+  if (existsSync(p)) {
+    try { tok = readFileSync(p, 'utf8').trim(); } catch { tok = ''; }
   }
-  return readFileSync(p, 'utf8').trim();
+  if (tok.length > 0) {
+    try { chmodSync(p, 0o600); } catch {}
+    return tok;
+  }
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  tok = randomBytes(24).toString('hex');
+  writeFileSync(p, tok, { mode: 0o600 });
+  try { chmodSync(p, 0o600); } catch {}
+  return tok;
 }
 const TOKEN = ensureToken();
 const TOKEN_BUF = Buffer.from(TOKEN);
 function checkToken(req) {
   const t = String(req.headers['x-tp-token'] || req.headers['x-ego-token'] || '');
   const b = Buffer.from(t);
+  // Length equality is not sufficient by itself: two empty Buffers compare equal, so an
+  // empty candidate token (or an empty daemon token) must be rejected explicitly.
+  if (b.length === 0 || TOKEN_BUF.length === 0) return false;
   return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
 }
 writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });

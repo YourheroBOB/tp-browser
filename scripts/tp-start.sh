@@ -173,12 +173,31 @@ sleep 0.6
 STOP_WAITED=0
 while tp_procs_alive; do
   if [ "$STOP_WAITED" -ge 5 ]; then
+    KILL_SIGNAL_CONFIRMED=1
     for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
       if pgrep -f "$pattern" >/dev/null 2>&1; then
-        pkill -9 -f "$pattern" 2>/dev/null || true
+        if pkill -9 -f "$pattern" 2>/dev/null; then
+          :
+        else
+          KILL_SIGNAL_CONFIRMED=0
+        fi
       fi
     done
     sleep 0.5
+    # 只有當 SIGKILL 無法確認已送達時，才有界地等待並 fail-closed：
+    # 仍殘留就保留 SingletonLock，不刪鎖、不跑 profile-init、不啟動 daemon/browser。
+    # 若 pkill -9 已确认成功，沿用既有清鎖路徑，避免 w4_s12 回歸測試退步。
+    if [ "$KILL_SIGNAL_CONFIRMED" -eq 0 ]; then
+      KILL_WAITED=0
+      while tp_procs_alive; do
+        if [ "$KILL_WAITED" -ge 5 ]; then
+          echo "TP_NOT_READY (profile still in use)" >&2
+          exit 1
+        fi
+        sleep 0.6
+        KILL_WAITED=$((KILL_WAITED + 1))
+      done
+    fi
     break
   fi
   sleep 0.6
@@ -187,7 +206,12 @@ done
 
 rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket" 2>/dev/null || true
 PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
-[ -f "$PROFILE_INIT_JS" ] && node "$PROFILE_INIT_JS" 2>/dev/null || true
+if [ -f "$PROFILE_INIT_JS" ]; then
+  # profile-init 會讀 EGO_LINUX_DATA_DIR；若沿用外部環境變數，可能把 Preferences
+  # 寫到另一個 profile，而 Chrome 使用的是 $DATA_DIR/profile-agent。明確覆寫成
+  # tp-start 自己使用的 DATA_DIR，確保書籤列與 session 設定真正生效。
+  EGO_LINUX_DATA_DIR="$DATA_DIR" node "$PROFILE_INIT_JS" 2>/dev/null || true
+fi
 
 # Helper to spawn a truly detached background process (setsid via Node.js)
 spawn_detached() {

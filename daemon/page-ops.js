@@ -526,6 +526,77 @@ export class BrowserHub {
     }
   }
 
+  // Keep `sessions` as the single source of truth for target lifecycle.
+  // - attach: create/refresh the entry (and record popup opener)
+  // - targetInfoChanged: refresh url/title
+  // - detachedFromTarget / targetDestroyed: drop the entry
+  // Unknown targets are ignored instead of throwing.
+  _trackTargetLifecycle(method, params) {
+    const info = params?.targetInfo;
+    let targetId = info?.targetId || params?.targetId;
+    const sessionId = params?.sessionId || info?.sessionId;
+
+    if (method === 'Target.detachedFromTarget') {
+      if (targetId && this.sessions.delete(targetId)) return;
+      if (sessionId) {
+        for (const [tid, st] of this.sessions) {
+          if (st.sessionId === sessionId) {
+            this.sessions.delete(tid);
+            return;
+          }
+        }
+      }
+      return;
+    }
+
+    if (!targetId) return;
+    if (method === 'Target.attachedToTarget') {
+      const sid = params?.sessionId || info?.sessionId;
+      if (!sid) return;
+      let st = this.sessions.get(targetId);
+      if (!st) {
+        st = {
+          sessionId: sid,
+          mainFrameId: null,
+          frames: new Set(),
+          net: new Set(),
+          title: '',
+          url: '',
+          modBits: 0,
+          attachedAt: Date.now(),
+        };
+        this.sessions.set(targetId, st);
+      } else if (!st.sessionId) {
+        st.sessionId = sid;
+      }
+      if (typeof info?.url === 'string') st.url = info.url;
+      if (typeof info?.title === 'string') st.title = info.title;
+      if (info?.openerId) {
+        st.isPopup = true;
+        st.openerId = info.openerId;
+        if (!this.popupsSeen.some((p) => p.targetId === targetId)) {
+          this.popupsSeen.push({ targetId, openerId: info.openerId, at: Date.now() });
+          if (typeof this.onPush === 'function') {
+            this.onPush(targetId, 'popup', { ...info });
+          }
+        }
+      }
+      return;
+    }
+    if (method === 'Target.targetInfoChanged') {
+      const st = this.sessions.get(targetId);
+      if (!st) return;
+      if (typeof info?.url === 'string') st.url = info.url;
+      if (typeof info?.title === 'string') st.title = info.title;
+      if (info?.openerId) st.openerId = info.openerId;
+      return;
+    }
+
+    if (method === 'Target.targetDestroyed') {
+      this.sessions.delete(targetId);
+    }
+  }
+
   async resetSiteAuth(targetId) {
     const st = this.sessionOf(targetId);
     const curUrl = st.url || (await this.evalIn(targetId, 'location.href').catch(() => '')) || '';
@@ -601,8 +672,15 @@ export class BrowserHub {
   _wire() {
     const cdp = this.cdp;
     cdp.onEvent(({ sessionId, method, params }) => {
-      // browser-level events have sessionId === null
-      if (!sessionId) return this._browserEvent(method, params);
+      // Browser-level events have sessionId === null and are the source of truth for
+      // target lifecycles: this.sessions is what rebindSpaces / space.tabs / page.adopt
+      // read. Chromium may announce the same target several times (targetCreated ->
+      // attachToTarget -> attachedToTarget), so the tracker is idempotent.
+      if (!sessionId) {
+        this._browserEvent(method, params);
+        this._trackTargetLifecycle(method, params);
+        return;
+      }
       for (const [tid, st] of this.sessions) {
         if (st.sessionId === sessionId) { this._sessionEvent(tid, st, method, params); return; }
       }

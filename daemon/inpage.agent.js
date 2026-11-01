@@ -94,6 +94,14 @@
     // returns {kind, ...}
     let m;
     if ((m = sel.match(/^@(\d+)$/)) || (m = sel.match(/^ref=(\d+)$/))) return { kind: 'ref', ref: +m[1] };
+    // text=... >> nth=N must run before the plain text= prefix, which would swallow the suffix.
+    if ((m = sel.match(/^text=(?:"((?:[^"\\]|\\.)*)"|([^">]+))\s*>>\s*nth=(-?\d+)$/))) {
+      return { kind: 'text', value: m[1] !== undefined ? m[1] : m[2].trim(), exact: m[1] !== undefined, nth: parseInt(m[3], 10) };
+    }
+    if (sel.startsWith('text=') && sel.includes('>> nth=')) {
+      const [a, b] = sel.split('>>');
+      return { kind: 'text', value: a.slice(5).trim(), exact: false, nth: parseInt(b.replace('nth=', '').trim(), 10) };
+    }
     if (sel.startsWith('text=')) {
       const t = sel.slice(5);
       if (t.length > 1 && t.startsWith('"') && t.endsWith('"')) return { kind: 'text', value: t.slice(1, -1), exact: true };
@@ -123,14 +131,6 @@
       }
       return { kind: 'css', value: body, nth };
     }
-    // text=... >> nth=N
-    if ((m = sel.match(/^text=(?:"((?:[^"\\]|\\.)*)"|([^">]+))\s*>>\s*nth=(-?\d+)$/))) {
-      return { kind: 'text', value: m[1] !== undefined ? m[1] : m[2].trim(), exact: m[1] !== undefined, nth: parseInt(m[3], 10) };
-    }
-    if (sel.startsWith('text=') && sel.includes('>> nth=')) {
-      const [a, b] = sel.split('>>');
-      return { kind: 'text', value: a.slice(5).trim(), exact: false, nth: parseInt(b.replace('nth=', '').trim(), 10) };
-    }
     return { kind: 'css', value: sel, nth: null };
   }
 
@@ -154,6 +154,14 @@
     return out;
   }
 
+  // Playwright nth: 0-based, negative counts from the end (-1 is the last match).
+  function applyNth(els, nth) {
+    if (nth === null || nth === undefined) return els;
+    const i = nth < 0 ? els.length + nth : nth;
+    if (!Number.isInteger(i) || i < 0 || i >= els.length) return [];
+    return els.slice(i, i + 1);
+  }
+
   function select(sel) {
     const spec = parseSelector(sel);
     let els = [];
@@ -168,6 +176,7 @@
           const t = spec.exact ? own : own.toLowerCase();
           if (spec.exact ? t === want : t.includes(want)) els.push(el);
         }
+        els = applyNth(els, spec.nth);
         break;
       }
       case 'role': els = roleQuery(spec); break;
@@ -176,7 +185,7 @@
         try { list = Array.from(document.querySelectorAll(spec.value)); } catch { return { els: [], spec, error: 'invalid selector' }; }
         els = list.filter(visibleInViewport);
         if (els.length === 0 && list.length > 0) els = list; // force path handles hidden
-        if (spec.nth !== null && spec.nth !== undefined) { els = els.slice(spec.nth, spec.nth + 1); }
+        els = applyNth(els, spec.nth);
         break;
       }
       case 'cssText': {
@@ -188,7 +197,7 @@
           const t = spec.mode === 'text-is' ? norm(el.textContent) : norm(el.textContent).toLowerCase();
           return spec.mode === 'text-is' ? t === want : t.includes(want.toLowerCase());
         });
-        if (spec.nth !== null && spec.nth !== undefined) els = els.slice(spec.nth, spec.nth + 1);
+        els = applyNth(els, spec.nth);
         break;
       }
       case 'href': {

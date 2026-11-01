@@ -18,6 +18,10 @@ let prefs = {};
 if (existsSync(prefsPath)) {
   try { prefs = JSON.parse(readFileSync(prefsPath, 'utf8')); } catch { prefs = {}; }
 }
+if (prefs === null || typeof prefs !== 'object' || Array.isArray(prefs) ||
+    Object.getPrototypeOf(prefs) !== Object.prototype) {
+  prefs = {};
+}
 if (!prefs.bookmark_bar || typeof prefs.bookmark_bar !== 'object') prefs.bookmark_bar = {};
 prefs.bookmark_bar.show_on_all_tabs = true;
 if (!prefs.session || typeof prefs.session !== 'object') prefs.session = {};

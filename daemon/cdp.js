@@ -89,10 +89,54 @@ export class Cdp {
 
 export const once = (cdp, method, { sessionId, timeout = 30000 } = {}) =>
   new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { off(); reject(new Error(`${method} event timed out after ${timeout}ms`)); }, timeout);
-    const off = cdp.onEvent((ev) => {
+    if (cdp.closed) {
+      reject(new Error('CDP connection closed'));
+      return;
+    }
+
+    let timer = null;
+    let offEvent = () => {};
+    let offClose = () => {};
+    let settled = false;
+
+    const cleanup = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      offEvent();
+      offClose();
+    };
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    };
+
+    const closeHandler = () => settle(reject, new Error('CDP connection closed'));
+    if (typeof cdp.onClose === 'function') {
+      const unsubscribe = cdp.onClose(closeHandler);
+      if (typeof unsubscribe === 'function') offClose = unsubscribe;
+    }
+    if (settled) {
+      offClose();
+      return;
+    }
+
+    const unsubscribe = cdp.onEvent((ev) => {
       if (ev.method !== method) return;
       if (sessionId && ev.sessionId !== sessionId) return;
-      clearTimeout(timer); off(); resolve(ev.params);
+      settle(resolve, ev.params);
     });
+    if (typeof unsubscribe === 'function') offEvent = unsubscribe;
+    if (settled) {
+      offEvent();
+      return;
+    }
+
+    timer = setTimeout(
+      () => settle(reject, new Error(`${method} event timed out after ${timeout}ms`)),
+      timeout,
+    );
   });

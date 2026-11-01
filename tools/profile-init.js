@@ -254,6 +254,18 @@ if (bestCandidate) {
     } catch {}
   }
 
+  // Login Data, Login Data For Account, and Web Data are encrypted under
+  // os_crypt.encrypted_key. Sync them when both profiles lack a key (typical
+  // Linux/macOS) or both keys are equal. When both keys exist and differ, keep
+  // the destination files and their -wal/-journal/-shm sidecars: Local State
+  // still holds the destination key, so copied rows would be undecryptable.
+  // Cookies that are already >= 64KB never refresh that key.
+  const loginSrcOsCrypt = readSourceOsCrypt(join(bestCandidate.baseDir, 'Local State'));
+  const loginDstOsCrypt = readSourceOsCrypt(join(profileRoot, 'Local State'));
+  const loginSrcKey = loginSrcOsCrypt ? loginSrcOsCrypt.encrypted_key : null;
+  const loginDstKey = loginDstOsCrypt ? loginDstOsCrypt.encrypted_key : null;
+  const loginKeysConflict = loginSrcKey !== null && loginDstKey !== null && loginSrcKey !== loginDstKey;
+
   // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
   for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {
     const srcDb = join(bestCandidate.profDir, dbName);
@@ -261,6 +273,10 @@ if (bestCandidate) {
     const srcSz = fileSize(srcDb);
     const dstSz = fileSize(dstDb);
     if (srcSz > 0 && (forceSync || dstSz < srcSz * 0.5)) {
+      if (loginKeysConflict) {
+        console.log(`Skipped ${dbName} sync: source and destination os_crypt.encrypted_key differ`);
+        continue;
+      }
       try {
         replaceSqliteFile(srcDb, dstDb);
       } catch {}

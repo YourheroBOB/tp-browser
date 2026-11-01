@@ -318,7 +318,10 @@ async function runNodeJs(args) {
   code = String(code || '').replace(/^\uFEFF/, '');
 
   const { port, h, launcher } = await ensureRunning();
-  if (!h || !h.ok) {
+  // 啟動器失敗時，即使埠上有別的 daemon 回應 /health（Chromium 沒掛上），也要回報啟動器失敗，
+  // 不能把它當成可用：否則後面會在讀 token 時才以不相干的錯誤 exit 1。
+  const launcherFailed = launcher && launcher.code !== 0 && !(h && h.ok && h.chrome);
+  if (!h || !h.ok || launcherFailed) {
     if (launcher && launcher.code !== 0) {
       console.error(`tp-browser: launcher ${launcher.label} exited with code ${launcher.code}; the daemon did not come up.`);
     }

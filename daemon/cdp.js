@@ -30,7 +30,12 @@ export class Cdp {
       ws.onerror = () => { clearTimeout(timer); reject(new Error(`CDP connect failed: ${this.wsUrl}`)); };
       ws.onclose = () => {
         this.closed = true;
-        for (const [, p] of this.pending) p.reject(new Error('CDP connection closed'));
+        for (const [, p] of this.pending) {
+          // 連線已死，回應永遠不會到；不清計時器的話每個未完成的 send 都會把
+          // 事件迴圈多撐住最多 timeout 毫秒（CLI 與測試因此卡住）。
+          clearTimeout(p.timer);
+          p.reject(new Error('CDP connection closed'));
+        }
         this.pending.clear();
         for (const fn of this.closeHandlers ?? []) fn();
       };
@@ -64,7 +69,15 @@ export class Cdp {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out after ${timeout}ms`)); }, timeout);
       this.pending.set(id, { resolve, reject, timer, method });
-      this.ws.send(JSON.stringify(msg));
+      try {
+        this.ws.send(JSON.stringify(msg));
+      } catch (err) {
+        // ws.send 可能同步丟錯（例如 socket 剛好進入 closing 狀態）。此時若不在此
+        // 收拾，pending 項目與計時器會殘留到逾時，promise 也不會立刻失敗。
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(`${method} send failed: ${String(err)}`));
+      }
     });
   }
 

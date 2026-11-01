@@ -11,6 +11,9 @@ $DataDir = Join-Path $HOME ".local\share\ego-linux"
 $ProfileDir = Join-Path $DataDir "profile-agent"
 $LogsDir = Join-Path $DataDir "logs"
 $DaemonJs = Join-Path $DataDir "daemon\ego-browserd.js"
+if (-not (Test-Path $DaemonJs)) {
+    $DaemonJs = Join-Path (Split-Path $PSScriptRoot -Parent) "daemon\ego-browserd.js"
+}
 
 New-Item -ItemType Directory -Force -Path $ProfileDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
@@ -65,7 +68,7 @@ if (-not $BrowserBin -or -not (Test-Path $BrowserBin)) {
 }
 
 if (-not $BrowserBin -or -not (Test-Path $BrowserBin)) {
-    Write-Error "ERROR: No Chrome or Edge binary found on this Windows machine!"
+    [Console]::Error.WriteLine("ERROR: No Chrome or Edge binary found on this Windows machine!")
     exit 1
 }
 $TargetExeName = Split-Path $BrowserBin -Leaf
@@ -123,7 +126,7 @@ if (-not $NodeBin) {
     }
 }
 if (-not $NodeBin) {
-    Write-Error "ERROR: node.exe not found!"
+    [Console]::Error.WriteLine("ERROR: node.exe not found!")
     exit 1
 }
 

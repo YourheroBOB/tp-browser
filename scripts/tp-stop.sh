@@ -20,19 +20,26 @@ all_stopped() {
   return 0
 }
 
-# Check immediately, then at one-second intervals for at most five seconds.
-waited=0
-while :; do
-  if all_stopped; then
-    echo "TP_STOPPED"
-    exit 0
-  fi
-  if [ "$waited" -ge 5 ]; then
-    break
-  fi
-  sleep 1
-  waited=$((waited + 1))
-done
+# Check immediately, then at one-second intervals for up to $1 extra seconds.
+wait_until_stopped() {
+  waited=0
+  while :; do
+    if all_stopped; then
+      return 0
+    fi
+    if [ "$waited" -ge "$1" ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+# Graceful shutdown: up to five seconds before resorting to SIGKILL.
+if wait_until_stopped 5; then
+  echo "TP_STOPPED"
+  exit 0
+fi
 
 # Graceful shutdown timed out; force only processes that are still present.
 for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
@@ -41,7 +48,12 @@ for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
   fi
 done
 
-if all_stopped; then
+# SIGKILL only queues the signal: pgrep keeps matching the target until the
+# kernel reaps it (and a zombie child of another shell stays visible even
+# longer). Checking once right after the kill therefore reported
+# TP_STOP_FAILED for a stop that was already in progress. Give the killed
+# processes a short, bounded window to disappear before giving up.
+if wait_until_stopped 3; then
   echo "TP_STOPPED"
   exit 0
 fi

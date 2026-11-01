@@ -2,7 +2,7 @@
 // Automatically initializes `profile-agent/Default/Preferences` to always show the
 // native Bookmarks Bar (`bookmark_bar.show_on_all_tabs = true`), enable session persistence,
 // and import the user's existing local browser Bookmarks, Favicons, Saved Logins, Local Storage & IndexedDB.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, renameSync, statSync, unlinkSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -91,6 +91,64 @@ function replaceSqliteFile(srcPath, dstPath) {
   }
   for (const ext of ['-journal', '-wal', '-shm']) {
     try { if (existsSync(dstPath + ext)) unlinkSync(dstPath + ext); } catch {}
+  }
+}
+
+// Directory-sized browser state must never be copied file-by-file into a live destination.
+// A leveldb destination that keeps stale .ldb/.log/MANIFEST-* files next to the source
+// CURRENT/MANIFEST pair is corrupt, and an IndexedDB copy that fails halfway leaves a partial
+// directory that `existsSync()` later treats as complete. Stage the whole tree in a sibling
+// temp directory, swap it in only after the copy succeeded, and roll back on any failure so the
+// previous contents survive.
+function removePathQuietly(target) {
+  try { rmSync(target, { recursive: true, force: true }); } catch {}
+}
+
+function copyTreeFiltered(srcDir, dstDir, filter) {
+  mkdirSync(dstDir, { recursive: true });
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    if (!filter(entry.name)) continue;
+    const src = join(srcDir, entry.name);
+    const dst = join(dstDir, entry.name);
+    if (entry.isDirectory()) {
+      copyTreeFiltered(src, dst, filter);
+    } else if (entry.isFile()) {
+      copyFileSync(src, dst);
+    }
+    // Symlinks and special files are intentionally skipped: browser profile payloads are regular
+    // files/directories, and skipping prevents a hostile source entry from escaping the stage.
+  }
+}
+
+function syncTreeStaged(srcDir, dstDir, filter = () => true) {
+  const parent = dirname(dstDir);
+  mkdirSync(parent, { recursive: true });
+  const stamp = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmp = `${dstDir}.fmb-sync-tmp-${stamp}`;
+  removePathQuietly(tmp);
+  try {
+    copyTreeFiltered(srcDir, tmp, filter);
+    if (!existsSync(dstDir)) {
+      renameSync(tmp, dstDir);
+      return true;
+    }
+    const backup = `${dstDir}.fmb-sync-old-${stamp}`;
+    removePathQuietly(backup);
+    renameSync(dstDir, backup);
+    try {
+      renameSync(tmp, dstDir);
+    } catch (err) {
+      try {
+        renameSync(backup, dstDir);
+        removePathQuietly(backup);
+      } catch {}
+      throw err;
+    }
+    removePathQuietly(backup);
+    return true;
+  } catch (err) {
+    removePathQuietly(tmp);
+    throw err;
   }
 }
 
@@ -279,11 +337,7 @@ if (bestCandidate) {
   const dstLsSz = dirSize(dstLsDir);
   if (srcLsSz > 0 && (forceSync || (dstLsSz < 1500000 && dstLsSz < srcLsSz * 0.3))) {
     try {
-      mkdirSync(dstLsDir, { recursive: true });
-      for (const f of readdirSync(srcLsDir)) {
-        if (f === 'LOCK') continue;
-        try { copyFileSync(join(srcLsDir, f), join(dstLsDir, f)); } catch {}
-      }
+      syncTreeStaged(srcLsDir, dstLsDir, (name) => name !== 'LOCK');
       console.log(`Synced Local Storage (${Math.round(srcLsSz / 1024)} KB) from: ${srcLsDir}`);
     } catch {}
   }
@@ -299,10 +353,7 @@ if (bestCandidate) {
         const dstEntry = join(dstIdbDir, entry);
         if (!existsSync(dstEntry)) {
           try {
-            cpSync(join(srcIdbDir, entry), dstEntry, {
-              recursive: true,
-              filter: (src) => !src.endsWith('LOCK'),
-            });
+            syncTreeStaged(join(srcIdbDir, entry), dstEntry, (name) => name !== 'LOCK');
           } catch {}
         }
       }

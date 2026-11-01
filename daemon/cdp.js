@@ -20,7 +20,28 @@ export class Cdp {
   }
 
   onEvent(fn) { this.handlers.add(fn); return () => this.handlers.delete(fn); }
-  onClose(fn) { this.closeHandlers ??= new Set(); this.closeHandlers.add(fn); return () => this.closeHandlers.delete(fn); }
+  // 連線關閉後才註冊的 handler 永遠等不到 onclose（close 只會發生一次），呼叫端因此
+  // 無從得知連線已死。這裡在下一個 microtask 補呼叫一次，並維持「回傳可取消的 off
+  // 函式」契約：補呼叫發生前呼叫 off() 可取消，回傳 true；已觸發或已取消則回傳 false。
+  onClose(fn) {
+    if (this.closed) {
+      let cancelled = false;
+      let fired = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        fired = true;
+        try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
+      });
+      return () => {
+        if (fired || cancelled) return false;
+        cancelled = true;
+        return true;
+      };
+    }
+    this.closeHandlers ??= new Set();
+    this.closeHandlers.add(fn);
+    return () => this.closeHandlers.delete(fn);
+  }
 
   connect(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
@@ -37,7 +58,11 @@ export class Cdp {
           p.reject(new Error('CDP connection closed'));
         }
         this.pending.clear();
-        for (const fn of this.closeHandlers ?? []) fn();
+        for (const fn of this.closeHandlers ?? []) {
+          // 單一 close handler 丟錯不可中斷後續 handler（例如 daemon 的重新附掛邏輯），
+          // 也不可讓錯誤從事件回呼往外冒；比照 onEvent 逐個隔離並記錄。
+          try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
+        }
       };
       ws.onmessage = (ev) => this._recv(ev.data);
     });

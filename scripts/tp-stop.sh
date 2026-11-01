@@ -3,29 +3,72 @@
 set -eu
 DATA_DIR="$HOME/.local/share/ego-linux"
 PROFILE_DIR="$DATA_DIR/profile-agent"
+
+# pkill/pgrep -f take an *extended regular expression*, not a literal string.
+# $PROFILE_DIR used to be interpolated verbatim, so a HOME such as /tmp/x/a+b or
+# /tmp/x/a[b produced a pattern that matched nothing (the agent Chrome stayed
+# alive) or made pgrep exit 2 — which all_stopped read as "nothing is running"
+# and still printed TP_STOPPED. Escape the regex metacharacters first.
+esc_regex() {
+  printf '%s' "$1" | sed -e 's/[][\.*^$()+?{}|]/\\&/g'
+}
+
+EGO_RE="$(esc_regex 'ego-browserd.js')"
+TPD_RE="$(esc_regex 'tp-browserd.js')"
+PROFILE_RE="$(esc_regex "$PROFILE_DIR")"
+
 curl -fsS --max-time 3 "http://127.0.0.1:9772/flush-and-close" >/dev/null 2>&1 || true
 curl -fsS --max-time 3 "http://127.0.0.1:9774/flush-and-close" >/dev/null 2>&1 || true
 sleep 1.0
 
-pkill -f "ego-browserd.js" 2>/dev/null || true
-pkill -f "tp-browserd.js" 2>/dev/null || true
-pkill -f "$PROFILE_DIR" 2>/dev/null || true
+pkill -f "$EGO_RE" 2>/dev/null || true
+pkill -f "$TPD_RE" 2>/dev/null || true
+pkill -f "$PROFILE_RE" 2>/dev/null || true
 
-all_stopped() {
-  for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
-    if pgrep -f "$pattern" >/dev/null 2>&1; then
-      return 1
+# proc_state <ere>:
+#   0 = at least one process matched
+#   1 = nothing matched
+#   2 = pgrep itself failed (bad pattern / usage error / binary missing)
+proc_state() {
+  rc=0
+  pgrep -f "$1" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ge 2 ]; then
+    return 2
+  fi
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+  return 1
+}
+
+# any_present:
+#   0 = a target is still running
+#   1 = no target is running
+#   2 = pgrep failed — an exit status >= 2 is NOT evidence that nothing runs.
+any_present() {
+  for re in "$EGO_RE" "$TPD_RE" "$PROFILE_RE"; do
+    st=0
+    proc_state "$re" || st=$?
+    if [ "$st" -ne 1 ]; then
+      return "$st"
     fi
   done
-  return 0
+  return 1
 }
 
 # Check immediately, then at one-second intervals for up to $1 extra seconds.
+# Returns 0 only when every target is really gone (1 = timed out, 2 = pgrep error).
 wait_until_stopped() {
   waited=0
   while :; do
-    if all_stopped; then
+    st=0
+    any_present || st=$?
+    if [ "$st" -eq 1 ]; then
       return 0
+    fi
+    if [ "$st" -eq 2 ]; then
+      echo "tp-stop: pgrep failed; refusing to report success" >&2
+      return 2
     fi
     if [ "$waited" -ge "$1" ]; then
       return 1
@@ -42,9 +85,11 @@ if wait_until_stopped 5; then
 fi
 
 # Graceful shutdown timed out; force only processes that are still present.
-for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
-  if pgrep -f "$pattern" >/dev/null 2>&1; then
-    pkill -9 -f "$pattern" 2>/dev/null || true
+for re in "$EGO_RE" "$TPD_RE" "$PROFILE_RE"; do
+  st=0
+  proc_state "$re" || st=$?
+  if [ "$st" -eq 0 ]; then
+    pkill -9 -f "$re" 2>/dev/null || true
   fi
 done
 

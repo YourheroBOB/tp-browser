@@ -132,8 +132,15 @@ if (-not $Restart) {
     } catch {}
 }
 
-# 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes
-try { Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+# 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes.
+#    The Stop-Process sweep below terminates EVERY ego daemon, including a stale one still
+#    sitting on the other port pair (9772 vs 9774). Flushing only the port we are about to
+#    start left that other stack's Chrome to be hard-killed by Stop-Process -Force, which can
+#    lose the cookie / storage state the user just created there. So flush both default ports
+#    before the sweep; -AltPort still gets its 9774 flush from this same list.
+foreach ($FlushPort in @(9772, 9774)) {
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$FlushPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+}
 Start-Sleep -Milliseconds 1000
 
 Get-CimInstance Win32_Process | Where-Object {

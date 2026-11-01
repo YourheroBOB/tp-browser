@@ -109,8 +109,41 @@ if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
   exit 1
 fi
 
-# Only flush and stop the current instance after a browser executable is available.
-curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
+# Only flush and stop existing instances after a browser executable is available.
+#
+# The sweep below (pkill -f ego-browserd.js / tp-browserd.js / $PROFILE_DIR) does
+# not target "the daemon on $DAEMON_PORT" — it matches *every* TP daemon and
+# agent Chrome on this machine, including the other port group (9772 vs 9774)
+# and any extra port recorded in daemon.json. Flushing only $DAEMON_PORT
+# therefore terminated the other group's Chrome before it could persist cookies
+# and storage (silent login-state loss). ego-start.ps1 already flushes every
+# port; mirror it here: flush the port we are about to start, then the fixed
+# dual-port set, then the daemon.json port — skipping duplicates and any value
+# that is not a usable TCP port.
+FLUSH_PORTS="$DAEMON_PORT 9772 9774"
+if [ -f "$DATA_DIR/daemon.json" ]; then
+  CFG_FLUSH_PORT="$(tr -d '\r' < "$DATA_DIR/daemon.json" 2>/dev/null \
+    | sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    | head -n 1 || true)"
+  if [ -n "${CFG_FLUSH_PORT:-}" ]; then
+    FLUSH_PORTS="$FLUSH_PORTS $CFG_FLUSH_PORT"
+  fi
+fi
+
+FLUSH_SEEN=" "
+for _flush_port in $FLUSH_PORTS; do
+  case "$_flush_port" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if [ "$_flush_port" -lt 1 ] || [ "$_flush_port" -gt 65535 ]; then
+    continue
+  fi
+  case "$FLUSH_SEEN" in
+    *" $_flush_port "*) continue ;;
+  esac
+  FLUSH_SEEN="$FLUSH_SEEN$_flush_port "
+  curl -fsS --max-time 3 "http://127.0.0.1:$_flush_port/flush-and-close" >/dev/null 2>&1 || true
+done
 sleep 1.0
 
 # Stop existing TP Browser processes for this profile/daemon.

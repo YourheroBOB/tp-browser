@@ -48,10 +48,11 @@ const NAMED = Object.assign(Object.create(null), {
   Alt: { key: 'Alt', code: 'AltLeft', vk: 18, modifier: 'Alt' },
   Control: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
   Ctrl: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
-  // ControlOrMeta 也是「可按的鍵名」（等同 Control）：Playwright 以它跨平台表示
-  // Ctrl/Meta，但不少呼叫端會直接 keyDescriptor('ControlOrMeta') 取描述子來 dispatch。
+  // ControlOrMeta 也是「可按的鍵名」：Playwright 以它跨平台表示 Ctrl(Meta)，
+  // 不少呼叫端會直接 keyDescriptor('ControlOrMeta') 取描述子來 dispatch。
   // 缺少這筆時 parseChord('ControlOrMeta') 拋 unknown key，與可正常解析的
-  // parseChord('Control') 不一致。
+  // parseChord('Control') 不一致。此處表格值為「非 darwin」的預設（等同 Control）；
+  // keyDescriptor() 在 darwin 上會改回 Meta 描述子（見該函式內的平台判斷）。
   ControlOrMeta: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
   Meta: { key: 'Meta', code: 'MetaLeft', vk: 91, modifier: 'Meta' },
   Command: { key: 'Meta', code: 'MetaLeft', vk: 91, modifier: 'Meta' },
@@ -190,6 +191,10 @@ export function isModifier(name) {
 export function modifierBit(name) {
   if (typeof name !== 'string' || !Object.hasOwn(MODIFIERS, name)) return 0;
   if ((name === 'Ctrl' || name === 'Command') && isLegacyTestCall()) return 0;
+  // Playwright 在 macOS（darwin）上把 ControlOrMeta 對應到 Meta（Command）鍵，
+  // 而非 Control。daemon 與 Chrome 同機，以 process.platform 判斷是合理且必要的：
+  // 否則 press('ControlOrMeta+a') 在 Mac 上送出的是 Ctrl+A（游標移到行首）而不是全選。
+  if (name === 'ControlOrMeta' && process.platform === 'darwin') return MODIFIERS.Meta;
   return MODIFIERS[name];
 }
 
@@ -201,6 +206,9 @@ export function keyDescriptor(name) {
     if (name === 'ControlOrMeta' && isLegacyTestCall()) return null;
     // 既有 w0／w6 測試把 F13 釘死為未知鍵；僅在這些測試呼叫端暫時維持舊行為。
     if (isLegacyUnsupportedFKeyCall(name)) return null;
+    // macOS（darwin）上 ControlOrMeta 是 Meta（Command）鍵：描述子隨之改成 Meta，
+    // 與 modifierBit 的平台判斷一致，避免 dispatch 出 Ctrl+A 而非 Cmd+A。
+    if (name === 'ControlOrMeta' && process.platform === 'darwin') return NAMED.Meta;
     return NAMED[name];
   }
   // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；

@@ -3,6 +3,22 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+// 舊版、手動編輯或半寫入的 ledger 可能沒有 nextSpaceId，或它的值落後於既有 space id。
+// 若不修正就進 create()：`undefined++`／`'x'++` 會算出 NaN 並把新空間寫進 "NaN" 鍵；
+// `nextSpaceId` 落後時則會直接覆蓋既有空間（id 重用）。因此在載入後把
+// nextSpaceId 正規化成「大於所有既有 space id 的正整數」。
+// 註：刻意不新增 Store 的 prototype 方法，避免破壞 Store.prototype 的公開介面契約。
+function normalizeNextSpaceId(data) {
+  if (data === null || typeof data !== 'object') return;
+  const spaces = data.spaces;
+  const ids = spaces !== null && typeof spaces === 'object' && !Array.isArray(spaces)
+    ? Object.keys(spaces).map((key) => Number(key)).filter((n) => Number.isInteger(n) && n > 0)
+    : [];
+  const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+  const current = data.nextSpaceId;
+  if (!Number.isInteger(current) || current < 1 || current <= maxId) data.nextSpaceId = maxId + 1;
+}
+
 export class Store {
   constructor(file) {
     this.file = file;
@@ -11,7 +27,15 @@ export class Store {
   }
   load() {
     try {
-      if (existsSync(this.file)) this.data = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (!existsSync(this.file)) return;
+      const parsed = JSON.parse(readFileSync(this.file, 'utf8'));
+      // 根節點不是物件（null／陣列／純量）時無法當 ledger 用；視為損壞檔並降級，
+      // 而不是把 null 或 [] 塞進 this.data 讓後續每個方法都炸 TypeError。
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`ledger root is not an object (got ${Array.isArray(parsed) ? 'array' : typeof parsed})`);
+      }
+      this.data = parsed;
+      normalizeNextSpaceId(this.data);
     } catch (e) { console.error('[ego-browserd] store load failed, starting fresh:', e.message); }
   }
   persist() {
@@ -82,5 +106,11 @@ export class Store {
     if (page && page.targetId != null && page.targetId === s.activeTargetId) s.activeTargetId = null;
     this.persist();
   }
-  deleteSpace(id) { delete this.data.spaces[id]; this.persist(); }
+  deleteSpace(id) {
+    delete this.data.spaces[id];
+    // labelSeq 是「每個空間各自」的標籤計數器，空間刪掉後必須一起清掉；
+    // 否則 ledger 只增不減（回收器每次回收都留下一筆孤兒 labelSeq[id]）。
+    if (this.data.labelSeq) delete this.data.labelSeq[id];
+    this.persist();
+  }
 }

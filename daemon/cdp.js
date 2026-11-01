@@ -7,6 +7,19 @@ export class CdpError extends Error {
   }
 }
 
+// Node 的 setTimeout 只接受 0..2^31-1 毫秒；Infinity 與更大值會被夾成 1ms，
+// 伴隨 TimeoutOverflowWarning，使「不逾時」的請求幾乎立刻失敗。回傳 null 代表
+// 不設定計時器（Infinity＝不逾時）；大於上限的有限值夾到上限，而不是 1ms。
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const normalizeTimeoutMs = (value, fallbackMs) => {
+  const ms = value === undefined || value === null ? fallbackMs : value;
+  if (typeof ms !== 'number' || Number.isNaN(ms)) return fallbackMs;
+  if (ms === Number.POSITIVE_INFINITY) return null;
+  if (ms < 0) return 0;
+  if (ms > MAX_TIMEOUT_MS) return MAX_TIMEOUT_MS;
+  return ms;
+};
+
 export class Cdp {
   constructor(wsUrl, label = 'cdp') {
     this.wsUrl = wsUrl;
@@ -17,6 +30,12 @@ export class Cdp {
     this.sessions = new Set(); // known sessionIds
     this.ws = null;
     this.closed = false;
+    // connect() 握手期間建立的 socket 與其 reject 回呼：close() 可能在 WebSocket
+    // onopen 之前抵達（呼叫端不等握手就收手），此時 this.ws 仍是 null，若只設
+    // closed=true 會漏掉這條正在建立的連線。close() 據此主動關閉並讓 connect()
+    // 以「closed」理由拒絕，而不是留下一條無人持有的 socket。
+    this.connectSockets = new Set(); // WebSocket instances still handshaking
+    this.connectRejects = new Set(); // fn(error) to reject an in-flight connect()
   }
 
   onEvent(fn) { this.handlers.add(fn); return () => this.handlers.delete(fn); }
@@ -45,33 +64,61 @@ export class Cdp {
 
   connect(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
+      if (this.closed) {
+        // close() 已先發生：不應再開一條新連線。此訊息與逾時／連線失敗可區分。
+        reject(new Error(`CDP connect closed: ${this.wsUrl}`));
+        return;
+      }
+
       const ws = new WebSocket(this.wsUrl);
+      this.connectSockets.add(ws);
       // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。
       // 舊版逾時回呼「先 ws.close() 才 reject」：關閉正在握手的 socket 會先觸發 onerror，
       // 對外訊息因此變成誤導性的 "CDP connect failed"（真正原因是逾時）；更糟的是逾時之後
       // 才完成的握手會把半死的 socket 掛回 this.ws，讓已失敗的 client 看似可用。
       let settled = false;
       let timer = null;
+      let rejectConnect = () => {};
+      const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs, 15000);
       const settle = (ok, value) => {
         if (settled) return false;
         settled = true;
         clearTimeout(timer);
+        this.connectSockets.delete(ws);
+        this.connectRejects.delete(rejectConnect);
         if (ok) resolve(value);
         else reject(value);
         return true;
       };
-      timer = setTimeout(() => {
-        if (!settle(false, new Error(`CDP connect timeout: ${this.wsUrl}`))) return;
-        try { ws.close(); } catch {}
-      }, timeoutMs);
+      rejectConnect = (err) => settle(false, err);
+      this.connectRejects.add(rejectConnect);
+
+      if (effectiveTimeoutMs !== null) {
+        timer = setTimeout(() => {
+          if (!settle(false, new Error(`CDP connect timeout: ${this.wsUrl}`))) return;
+          try { ws.close(); } catch {}
+        }, effectiveTimeoutMs);
+      }
+
       ws.onopen = () => {
-        // 已由逾時（或更早的 error）定案：晚到的 open 直接關掉，不讓 client 變成半死可用。
+        // 已由逾時（或更早的 error／close）定案：晚到的 open 直接關掉，不讓 client 變成半死可用。
         if (settled) { try { ws.close(); } catch {} return; }
+        // close() 在握手期間抵達：這條晚到的 socket 不屬於任何人，關掉並以 closed 拒絕。
+        if (this.closed) {
+          try { ws.close(); } catch {}
+          settle(false, new Error(`CDP connect closed: ${this.wsUrl}`));
+          return;
+        }
         this.ws = ws;
         settle(true, this);
       };
       ws.onerror = () => { settle(false, new Error(`CDP connect failed: ${this.wsUrl}`)); };
       ws.onclose = () => {
+        if (!settled) {
+          // 握手完成前就斷線：不可讓 connect() 永遠 pending。close() 已發生時理由必須是 closed。
+          settle(false, new Error(this.closed ? `CDP connect closed: ${this.wsUrl}` : `CDP connect failed: ${this.wsUrl}`));
+          return;
+        }
         this.closed = true;
         for (const [, p] of this.pending) {
           // 連線已死，回應永遠不會到；不清計時器的話每個未完成的 send 都會把
@@ -122,14 +169,27 @@ export class Cdp {
     const id = ++this.id;
     const msg = { id, method, params };
     if (sessionId) msg.sessionId = sessionId;
+    const effectiveTimeoutMs = normalizeTimeoutMs(timeout, 30000);
+    const timeoutLabel = effectiveTimeoutMs === null ? 'Infinity' : effectiveTimeoutMs;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out after ${timeout}ms`)); }, timeout);
-      this.pending.set(id, { resolve, reject, timer, method });
+      let timer = null;
+      const pending = { resolve, reject, timer, method };
+      this.pending.set(id, pending);
+      const failTimeout = () => {
+        if (this.pending.get(id) !== pending) return;
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out after ${timeoutLabel}ms`));
+      };
+      if (effectiveTimeoutMs !== null) {
+        timer = setTimeout(failTimeout, effectiveTimeoutMs);
+        pending.timer = timer;
+      }
       try {
         this.ws.send(JSON.stringify(msg));
       } catch (err) {
         // ws.send 可能同步丟錯（例如 socket 剛好進入 closing 狀態）。此時若不在此
         // 收拾，pending 項目與計時器會殘留到逾時，promise 也不會立刻失敗。
+        if (this.pending.get(id) !== pending) return;
         this.pending.delete(id);
         clearTimeout(timer);
         reject(err instanceof Error ? err : new Error(`${method} send failed: ${String(err)}`));
@@ -139,6 +199,22 @@ export class Cdp {
 
   close() {
     this.closed = true;
+
+    const handshaking = [...this.connectSockets];
+    this.connectSockets.clear();
+    const rejects = [...this.connectRejects];
+    this.connectRejects.clear();
+    const closedError = new Error(`CDP connect closed: ${this.wsUrl}`);
+
+    // 先讓 in-flight connect() 以「closed」定案，再關 socket。否則真實 WebSocket
+    // 在握手期間被 close() 可能先觸發 onerror，把對外理由變成連線失敗。
+    for (const rejectConnect of rejects) {
+      try { rejectConnect(closedError); } catch {}
+    }
+    for (const ws of handshaking) {
+      try { ws.close(); } catch {}
+    }
+
     try { this.ws?.close(); } catch {}
   }
 }
@@ -149,6 +225,8 @@ export const once = (cdp, method, { sessionId, timeout = 30000 } = {}) =>
     let offClose = () => {};
     let timer = null;
     let settled = false;
+    const effectiveTimeoutMs = normalizeTimeoutMs(timeout, 30000);
+    const timeoutLabel = effectiveTimeoutMs === null ? 'Infinity' : effectiveTimeoutMs;
     const cleanup = () => {
       settled = true;
       clearTimeout(timer);
@@ -156,7 +234,9 @@ export const once = (cdp, method, { sessionId, timeout = 30000 } = {}) =>
       offClose();
     };
     const fail = (err) => { if (settled) return; cleanup(); reject(err); };
-    timer = setTimeout(() => fail(new Error(`${method} event timed out after ${timeout}ms`)), timeout);
+    if (effectiveTimeoutMs !== null) {
+      timer = setTimeout(() => fail(new Error(`${method} event timed out after ${timeoutLabel}ms`)), effectiveTimeoutMs);
+    }
     offEvent = cdp.onEvent((ev) => {
       if (settled) return;
       if (ev.method !== method) return;

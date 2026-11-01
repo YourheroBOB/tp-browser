@@ -230,6 +230,61 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+const MAX_RPC_BODY_BYTES = 1048576;
+
+function rejectLargeRpcBody(req, res) {
+  res.writeHead(413, {
+    'content-type': 'application/json',
+    connection: 'close',
+  });
+  res.end(JSON.stringify({ ok: false, error: { name: 'PayloadTooLarge' } }));
+  req.pause();
+}
+
+function readRpcBody(req, res) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('error', onError);
+    };
+    const onData = (chunk) => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > MAX_RPC_BODY_BYTES) {
+        settled = true;
+        req.off('data', onData);
+        req.off('end', onEnd);
+        req.once('close', () => req.off('error', onError));
+        rejectLargeRpcBody(req, res);
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks));
+    };
+    const onError = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+  });
+}
+
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -268,15 +323,11 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/rpc' && req.method === 'POST') {
     if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
-    const chunks = [];
-    let total = 0;
-    for await (const c of req) {
-      total += c.length;
-      if (total > 1048576) { req.destroy(); return; }
-      chunks.push(c);
-    }
+    let body;
+    try { body = await readRpcBody(req, res); } catch { return; }
+    if (body === null) return;
     let msg;
-    try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
+    try { msg = JSON.parse(body.toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
     if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
       res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'body must be a JSON object' } }));
       return;
@@ -329,7 +380,9 @@ async function dispatch(method, p) {
     }
     case 'space.handOff': {
       const sp = store.get(p.id);
-      if (sp) { sp.state = 'handed-off'; store.persist(); }
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      sp.state = 'handed-off';
+      store.persist();
       return { handedOff: true };
     }
     case 'space.waitForControl': return { control: true };

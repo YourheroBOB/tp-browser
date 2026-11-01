@@ -80,7 +80,10 @@ export class Cdp {
           p.reject(new Error('CDP connection closed'));
         }
         this.pending.clear();
-        for (const fn of this.closeHandlers ?? []) {
+        // 與 _recv 相同：先快照再迭代。close handler 在分派中途 off() 其他 close
+        // handler 時，直接迭代 Set 會把後者跳過（漏呼叫）；快照則保證本輪已註冊的
+        // handler 都恰好被呼叫一次，且中途註冊的不會被同一輪走訪到。
+        for (const fn of [...(this.closeHandlers ?? [])]) {
           // 單一 close handler 丟錯不可中斷後續 handler（例如 daemon 的重新附掛邏輯），
           // 也不可讓錯誤從事件回呼往外冒；比照 onEvent 逐個隔離並記錄。
           try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
@@ -103,7 +106,13 @@ export class Cdp {
       return;
     }
     if (msg.sessionId) this.sessions.add(msg.sessionId);
-    for (const fn of this.handlers) {
+    // 以「分派開始時的快照」迭代，不可直接迭代 this.handlers：Set 迭代器會走訪
+    // 迭代期間新增的元素，因此在 handler 內註冊的監聽器（最典型是 once()）會吃到
+    // 「觸發它的那一個事件」——once() 立刻以過期事件的 params resolve。
+    // 快照同時保證每個本輪已註冊的 handler 恰好被呼叫一次：中途被 off() 的仍會收到
+    // 本次事件（避免漏呼叫），但不會收到後續事件；中途新增的要等下一個事件；
+    // 「off() 後重新註冊同一函式」也不會在同一輪被呼叫兩次。
+    for (const fn of [...this.handlers]) {
       try { fn({ sessionId: msg.sessionId ?? null, method: msg.method, params: msg.params ?? {} }); } catch (e) { console.error('[ego-browserd] handler error:', e); }
     }
   }

@@ -74,6 +74,26 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// SQLite sidecars (`-journal`, `-wal`, `-shm`) hold writes that have not been checkpointed into
+// the main database file yet, so they still belong to the *current* DB and must survive every
+// failed replacement. Deleting them before the copy means a copy that fails afterwards (locked
+// file, EACCES, ENOSPC, destination is a directory) silently throws away those writes — for
+// Cookies that is exactly the un-checkpointed login state. Stage the copy next to the
+// destination, rename it into place, and only drop the sidecars once the rename really succeeded.
+function replaceSqliteFile(srcPath, dstPath) {
+  const tmp = `${dstPath}.fmb-sync-tmp`;
+  try {
+    copyFileSync(srcPath, tmp);
+    renameSync(tmp, dstPath);
+  } catch (err) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    throw err;
+  }
+  for (const ext of ['-journal', '-wal', '-shm']) {
+    try { if (existsSync(dstPath + ext)) unlinkSync(dstPath + ext); } catch {}
+  }
+}
+
 // Return the source browser's `os_crypt` only when the destination can actually decrypt
 // cookies with it. Missing file, invalid JSON, `null`, an array or an empty
 // `encrypted_key` all mean "not usable" — in that case Cookies must not be replaced.
@@ -171,10 +191,7 @@ if (bestCandidate) {
   const curFavSz = fileSize(dstFavicons);
   if (bestCandidate.favSz > 0 && (forceSync || curFavSz < 100000 || curFavSz < bestCandidate.favSz * 0.5)) {
     try {
-      for (const ext of ['-journal', '-wal', '-shm']) {
-        try { if (existsSync(dstFavicons + ext)) unlinkSync(dstFavicons + ext); } catch {}
-      }
-      copyFileSync(bestCandidate.favFile, dstFavicons);
+      replaceSqliteFile(bestCandidate.favFile, dstFavicons);
       console.log(`Synced Favicons DB (${Math.round(bestCandidate.favSz / 1024)} KB) from: ${bestCandidate.favFile}`);
     } catch {}
   }
@@ -187,10 +204,7 @@ if (bestCandidate) {
     const dstSz = fileSize(dstDb);
     if (srcSz > 0 && (forceSync || dstSz < srcSz * 0.5)) {
       try {
-        for (const ext of ['-journal', '-wal', '-shm']) {
-          try { if (existsSync(dstDb + ext)) unlinkSync(dstDb + ext); } catch {}
-        }
-        copyFileSync(srcDb, dstDb);
+        replaceSqliteFile(srcDb, dstDb);
       } catch {}
     }
   }
@@ -218,8 +232,10 @@ if (bestCandidate) {
       // undecryptable — strictly worse than not syncing at all.
       const tmpCookies = `${dstCookies}.fmb-sync-tmp`;
       const tmpLocalState = `${dstLocalStatePath}.fmb-sync-tmp`;
+      // Snapshot the raw bytes (not a UTF-8 decode/re-encode) so a failed swap puts back the exact
+      // same file, byte for byte, even if it was not valid UTF-8.
       let prevLocalState = null;
-      try { if (existsSync(dstLocalStatePath)) prevLocalState = readFileSync(dstLocalStatePath, 'utf8'); } catch { prevLocalState = null; }
+      try { if (existsSync(dstLocalStatePath)) prevLocalState = readFileSync(dstLocalStatePath); } catch { prevLocalState = null; }
       try {
         mkdirSync(dstCookiesDir, { recursive: true });
         copyFileSync(srcCookies, tmpCookies);
@@ -227,21 +243,25 @@ if (bestCandidate) {
         dstLs.os_crypt = srcOsCrypt;
         writeFileSync(tmpLocalState, JSON.stringify(dstLs), 'utf8');
         renameSync(tmpLocalState, dstLocalStatePath);
-        for (const ext of ['-journal', '-wal', '-shm']) {
-          try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
-        }
         try {
           renameSync(tmpCookies, dstCookies);
         } catch (swapErr) {
           // Cookies could not be replaced: put the previous key back so the pair stays intact.
+          // Cookies-journal/-wal/-shm are deliberately left untouched: the destination DB is still
+          // the live one after a failed swap, and those sidecars carry its un-checkpointed writes.
           try {
             if (prevLocalState === null) {
               if (existsSync(dstLocalStatePath)) unlinkSync(dstLocalStatePath);
             } else {
-              writeFileSync(dstLocalStatePath, prevLocalState, 'utf8');
+              writeFileSync(dstLocalStatePath, prevLocalState);
             }
           } catch {}
           throw swapErr;
+        }
+        // The rename succeeded, so `dstCookies` is now the freshly copied database and the old
+        // sidecars describe a DB that no longer exists — dropping them here cannot lose anything.
+        for (const ext of ['-journal', '-wal', '-shm']) {
+          try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
         }
         console.log(`Synced Cookies (${Math.round(fileSize(srcCookies) / 1024)} KB) + Local State os_crypt from: ${srcCookies}`);
       } catch {

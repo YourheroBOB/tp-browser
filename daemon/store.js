@@ -19,6 +19,21 @@ function normalizeNextSpaceId(data) {
   if (!Number.isInteger(current) || current < 1 || current <= maxId) data.nextSpaceId = maxId + 1;
 }
 
+// `__proto__` 是 Object.prototype 上的存取器：`obj['__proto__'] = page` 不會建立自有鍵，
+// 而是把整個物件的原型換掉；JSON.stringify 只看自有可列舉鍵，於是那個分頁 persist 後直接消失。
+// `constructor`、`toString`、`valueOf` 等則是從 Object.prototype 繼承來的名稱，`obj[label]`
+// 會讀到非自有的資料（最糟是 Object.prototype 本身），一旦拿來當分頁 label 就會被誤判成
+// 「分頁已存在」，並讓 setPage 的 Object.assign 直接污染全域原型。這些鍵一律視為非法 label。
+// 註：同樣刻意不新增 Store 的 prototype 方法，維持 Store.prototype 的公開介面契約。
+const RESERVED_PAGE_LABELS = new Set(Object.getOwnPropertyNames(Object.prototype));
+
+function assertPageLabel(label) {
+  const key = String(label);
+  if (RESERVED_PAGE_LABELS.has(key)) {
+    throw new Error(`invalid page label ${key}`);
+  }
+}
+
 export class Store {
   constructor(file) {
     this.file = file;
@@ -58,7 +73,9 @@ export class Store {
     }
   }
   list() { return Object.values(this.data.spaces); }
-  get(id) { return this.data.spaces[id] ?? null; }
+  // 只認 `spaces` 的自有鍵：`spaces['__proto__']`／`spaces['constructor']` 會回傳原型上的
+  // 東西（分別是 Object.prototype 與 Object 函式），若不擋就會被當成「存在的空間」。
+  get(id) { return Object.hasOwn(this.data.spaces, id) ? (this.data.spaces[id] ?? null) : null; }
   create({ name, profileId = 'agent' }) {
     const id = this.data.nextSpaceId++;
     this.data.spaces[id] = {
@@ -74,31 +91,45 @@ export class Store {
   nextLabel(spaceId) {
     const s = this.get(spaceId);
     if (!s) return 'p?';
-    this.data.labelSeq[spaceId] = (this.data.labelSeq[spaceId] ?? 1) + 1;
+    // labelSeq 也只認自有鍵：繼承鍵（例如 'toString'）會讀到函式並寫出一筆孤兒序號，
+    // 讓 ledger 只增不減。
+    const seq = this.data.labelSeq;
+    const current = Object.hasOwn(seq, spaceId) ? seq[spaceId] : undefined;
+    seq[spaceId] = (current ?? 1) + 1;
     this.persist();
-    return `p${this.data.labelSeq[spaceId]}`;
+    return `p${seq[spaceId]}`;
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);
-    if (!s?.pages[label]) return;
-    Object.assign(s.pages[label], patch);
+    // 只認 `pages` 的自有鍵：`s.pages['__proto__']` 是 Object.prototype（truthy、非自有），
+    // 若照舊 Object.assign 下去就是全域原型污染。
+    if (!s || !Object.hasOwn(s.pages, label)) return;
+    const page = s.pages[label];
+    if (!page) return;
+    Object.assign(page, patch);
     this.persist();
   }
   bindPage(spaceId, label, targetId, openedBy = 'agent') {
     const s = this.get(spaceId);
     if (!s) throw new Error(`unknown space ${spaceId}`);
+    // 非法 label 若照舊直接指派，會改掉整個 pages 物件的原型（分頁在 persist 後消失）；
+    // 因此明確拒絕，而不是靜默寫入一份壞掉的 ledger。
+    assertPageLabel(label);
     s.pages[label] = { targetId, openedBy, title: '', url: '' };
     this.persist();
   }
   addPage(spaceId, label, targetId, openedBy = 'agent') {
     const s = this.get(spaceId);
     if (!s) throw new Error(`unknown space ${spaceId}`);
+    assertPageLabel(label);
     s.pages[label] = { targetId, openedBy, title: '', url: '' };
     this.persist();
   }
   removePage(spaceId, label) {
     const s = this.get(spaceId);
     if (!s) return;
+    // 非自有鍵一律視為不存在（避免把 Object.prototype 上的同名成員當成分頁）。
+    if (!Object.hasOwn(s.pages, label)) return;
     const page = s.pages[label];
     delete s.pages[label];
     // 被移除的分頁若正好是作用中的 target，activeTargetId 必須一起清掉，

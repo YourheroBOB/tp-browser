@@ -48,6 +48,8 @@ const PORT = ALT_PORT ? 9774 : 9772;
 const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;
 const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
+// POST /rpc body cap (bytes). Beyond this the daemon answers 413 PayloadTooLarge.
+const MAX_RPC_BODY_BYTES = 1048576;
 mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 mkdirSync(DOWNLOADS_DIR, { recursive: true, mode: 0o700 });
 
@@ -285,20 +287,44 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/rpc' && req.method === 'POST') {
     if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
+    // Read the body with a hard cap, but keep draining (and discarding) anything past
+    // the cap instead of destroying the socket: only a fully consumed request lets the
+    // 413 below reach the client, otherwise callers just see "socket hang up".
     const chunks = [];
     let total = 0;
-    for await (const c of req) {
-      total += c.length;
-      if (total > 1048576) { req.destroy(); return; }
-      chunks.push(c);
+    let tooLarge = false;
+    try {
+      for await (const c of req) {
+        total += c.length;
+        if (total > MAX_RPC_BODY_BYTES) {
+          if (!tooLarge) { tooLarge = true; chunks.length = 0; }
+          continue;
+        }
+        chunks.push(c);
+      }
+    } catch {
+      // Client vanished mid-upload (abort/reset). This must never escape as an
+      // unhandled rejection, which would take the whole daemon down.
+      if (!res.headersSent) { try { res.destroy(); } catch {} }
+      return;
+    }
+    if (tooLarge) {
+      res.writeHead(413, { 'content-type': 'application/json', connection: 'close' }).end(JSON.stringify({ ok: false, error: { name: 'PayloadTooLarge', message: `request body must not exceed ${MAX_RPC_BODY_BYTES} bytes` } }));
+      return;
     }
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
+    // JSON.parse happily yields null / arrays / scalars; dispatch() requires an object.
+    // Rejecting here keeps msg.method / msg.id from throwing inside the handler.
+    if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'request body must be a JSON object' } }));
+      return;
+    }
     try {
       const result = await dispatch(msg.method, msg.params || {});
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: msg.id ?? null, ok: true, result }));
     } catch (e) {
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: msg.id ?? null, ok: false, error: { name: e.name || 'Error', message: e.message } }));
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: msg.id ?? null, ok: false, error: { name: (e && e.name) || 'Error', message: String((e && e.message) || e) } }));
     }
     return;
   }

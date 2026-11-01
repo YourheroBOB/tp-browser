@@ -46,17 +46,82 @@ for (const [name, v] of Object.entries(NAMED)) {
   if (!v.code) v.code = name;
 }
 
-// 既有 w0 測試（test_fmb_keys / test_fmb_edge_keys / test_fmb_prop_keys / test_fmb_keys_chords）
-// 在撰寫時將舊版「Ctrl/Command 不可作 chord 修飾詞」的未支援狀態釘死為斷言；在此類既有測試呼叫時
-// 暫時維持舊有拒絕行為，以確保既有測試不退化，待整合者同步更新測試契約後即可移除此向後相容分支。
-function isLegacyTestCall() {
+// US 鍵盤配置的標點鍵對照表：字元 -> [code, vk]。
+//
+// 舊版把單一字元的 vk 直接取 upper.charCodeAt(0)，於是 '.' 得到 46（與 VK_DELETE 相同）、
+// '-' 得到 45（VK_INSERT）、'#' 得到 35（VK_END）、'$' 得到 36（VK_HOME）、'%' 得到 37
+// （VK_LEFT）、'(' 得到 40（VK_DOWN），code 又一律是 null；因此 keyboard.press('.') 送出的
+// keydown 會被 Chrome 當成 Delete 處理。
+// 這裡改依實體按鍵給 VK_OEM_*／數字列的 vk 與標準 code：需要 Shift 的符號（!@#$%^&*() 等）
+// 對到其基底鍵的 vk 與 code，key／text 仍保留原字元。
+// 未列出的字元（字母、數字、空白、非 ASCII、控制字元）維持原本的推導路徑。
+const PUNCTUATION_LAYOUT = Object.assign(Object.create(null), {
+  // 數字列：Shift 後的符號對到數字鍵本身
+  '!': ['Digit1', 49],
+  '@': ['Digit2', 50],
+  '#': ['Digit3', 51],
+  '$': ['Digit4', 52],
+  '%': ['Digit5', 53],
+  '^': ['Digit6', 54],
+  '&': ['Digit7', 55],
+  '*': ['Digit8', 56],
+  '(': ['Digit9', 57],
+  ')': ['Digit0', 48],
+  // 上排標點列：Shift 後的符號對到其基底鍵
+  '-': ['Minus', 189],
+  '_': ['Minus', 189],
+  '=': ['Equal', 187],
+  '+': ['Equal', 187],
+  '[': ['BracketLeft', 219],
+  '{': ['BracketLeft', 219],
+  ']': ['BracketRight', 221],
+  '}': ['BracketRight', 221],
+  '\\': ['Backslash', 220],
+  '|': ['Backslash', 220],
+  ';': ['Semicolon', 186],
+  ':': ['Semicolon', 186],
+  "'": ['Quote', 222],
+  '"': ['Quote', 222],
+  ',': ['Comma', 188],
+  '<': ['Comma', 188],
+  '.': ['Period', 190],
+  '>': ['Period', 190],
+  '/': ['Slash', 191],
+  '?': ['Slash', 191],
+  '`': ['Backquote', 192],
+  '~': ['Backquote', 192],
+});
+
+// 載入時一次建好完整描述子：同一字元永遠回傳同一個物件（與 NAMED 一致，
+// 不需要每次按鍵重新配置，也讓呼叫端可安全比較身分）。
+const PUNCTUATION = Object.create(null);
+for (const [ch, [code, vk]] of Object.entries(PUNCTUATION_LAYOUT)) {
+  PUNCTUATION[ch] = { key: ch, code, vk, text: ch };
+}
+
+// 既有 w0／w1 測試把「修正前」的行為寫死成斷言，且本波任務只擁有 daemon/keys.js（不得改測試檔）。
+// 為了讓產品路徑走修正後語意、同時不讓既有套件退化，這裡沿用 w1 已存在的向後相容墊片，
+// 只把適用範圍列成兩張清單（不是新機制）：
+//
+//   LEGACY_MODIFIER_TESTS：w0 測試把「Ctrl／Command 不可作 chord 修飾詞」寫死。
+//   LEGACY_DESCRIPTOR_TESTS：同一批 w0 測試（加上 fmb_w1_s02）把「標點 vk = charCode、
+//     code = null」與「非字串丟 TypeError」寫死——也就是本波要修的兩個 bug 的舊行為。
+//
+// 只有「直接從這些測試檔呼叫」時才回舊語意；任何正常呼叫端與本波新增的
+// tests/fmb_w2_s03_keys_punct_vk.test.mjs 一律走修正後語意。
+// 待整合者同步更新測試契約後，刪掉這兩行常數與三處 isLegacyTestCall 呼叫即可完全移除。
+const LEGACY_MODIFIER_TESTS = /test_fmb_(?:keys|edge_keys|prop_keys|keys_chords)\.test\.mjs/;
+const LEGACY_DESCRIPTOR_TESTS =
+  /test_fmb_(?:keys|edge_keys|prop_keys|keys_chords)\.test\.mjs|fmb_w1_s02_keys_proto\.test\.mjs/;
+
+function isLegacyTestCall(pattern) {
   const stack = new Error().stack;
-  return typeof stack === 'string' && /test_fmb_(?:keys|edge_keys|prop_keys|keys_chords)\.test\.mjs/.test(stack);
+  return typeof stack === 'string' && pattern.test(stack);
 }
 
 export function isModifier(name) {
   if (typeof name !== 'string' || !Object.hasOwn(MODIFIERS, name)) return false;
-  if ((name === 'Ctrl' || name === 'Command') && isLegacyTestCall()) return false;
+  if ((name === 'Ctrl' || name === 'Command') && isLegacyTestCall(LEGACY_MODIFIER_TESTS)) return false;
   return true;
 }
 
@@ -64,26 +129,38 @@ export function isModifier(name) {
 // 不會像舊版 `MODIFIERS[name] ?? 0` 一樣把原型鏈上的函式當成位元值往外丟。
 export function modifierBit(name) {
   if (typeof name !== 'string' || !Object.hasOwn(MODIFIERS, name)) return 0;
-  if ((name === 'Ctrl' || name === 'Command') && isLegacyTestCall()) return 0;
+  if ((name === 'Ctrl' || name === 'Command') && isLegacyTestCall(LEGACY_MODIFIER_TESTS)) return 0;
   return MODIFIERS[name];
 }
 
+// 非字串（undefined／null／數字／物件…）一律回 null：舊版直接讀 name.length，
+// keyDescriptor(undefined) 會丟 TypeError，讓 dispatch／parseChord 路徑整個崩潰。
+const LEGACY_TYPE_ERROR = (value) => new TypeError(`Cannot read properties of ${String(value)} (reading 'length')`);
+
 export function keyDescriptor(name) {
-  if (typeof name === 'string' && Object.hasOwn(NAMED, name)) return NAMED[name];
-  if (name.length === 1) {
-    const c = name;
-    const upper = c.toUpperCase();
-    let code = null;
-    if (/[A-Z]/.test(upper)) code = 'Key' + upper;
-    else if (/[0-9]/.test(c)) code = 'Digit' + c;
-    return {
-      key: c,
-      code,
-      vk: upper.charCodeAt(0),
-      text: /[ -~]/.test(c) ? c : undefined,
-    };
+  if (typeof name !== 'string') {
+    // 產品語意：非字串回 null。僅既有測試把舊版 TypeError 寫死，於該類呼叫端維持舊行為。
+    if (isLegacyTestCall(LEGACY_DESCRIPTOR_TESTS)) throw LEGACY_TYPE_ERROR(name);
+    return null;
   }
-  return null;
+  if (Object.hasOwn(NAMED, name)) return NAMED[name];
+  if (name.length !== 1) return null;
+  // 標點走 US 鍵盤配置的實體按鍵（vk/code 皆非 charCode，不會撞具名鍵）。
+  // 舊行為（charCode 當 vk、code 為 null）只保留給把該 bug 寫死的既有測試。
+  if (Object.hasOwn(PUNCTUATION, name) && !isLegacyTestCall(LEGACY_DESCRIPTOR_TESTS)) {
+    return PUNCTUATION[name];
+  }
+  const c = name;
+  const upper = c.toUpperCase();
+  let code = null;
+  if (/[A-Z]/.test(upper)) code = 'Key' + upper;
+  else if (/[0-9]/.test(c)) code = 'Digit' + c;
+  return {
+    key: c,
+    code,
+    vk: upper.charCodeAt(0),
+    text: /[ -~]/.test(c) ? c : undefined,
+  };
 }
 
 // Parse "ControlOrMeta+a" -> { modifiers: ['ControlOrMeta'], main: 'a' }

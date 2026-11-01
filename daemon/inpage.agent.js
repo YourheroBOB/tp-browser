@@ -173,7 +173,10 @@
     switch (spec.kind) {
       case 'ref': { const el = refIndex.get(spec.ref); els = el ? [el] : []; break; }
       case 'text': {
-        const want = spec.exact ? spec.value : norm(spec.value).toLowerCase();
+        // Exact text matching is whitespace-normalized on the page side; the query
+        // side must use the same normalization or `text="Hello  World"` can never
+        // match a page whose textContent normalizes to "Hello World".
+        const want = spec.exact ? norm(spec.value) : norm(spec.value).toLowerCase();
         // An empty text filter makes String#includes('') true for every element, so
         // `text=` (blank value / blank variable) or `text= >> nth=N` would "match" the
         // whole page and let resolve() hand back a handle for an arbitrary element —
@@ -385,14 +388,30 @@
       let o = null;
       if (typeof pick === 'number') o = opts[pick] || null;
       else if (pick && typeof pick === 'object') {
-        o = opts.find((x) => (pick.value !== undefined && x.value === pick.value) || (pick.label !== undefined && norm(x.textContent) === norm(pick.label))) || null;
+        // Object picks are AND, not OR: every provided field must match.
+        o = opts.find((x) => {
+          if (pick.value !== undefined && x.value !== pick.value) return false;
+          if (pick.label !== undefined && norm(x.textContent) !== norm(pick.label)) return false;
+          return pick.value !== undefined || pick.label !== undefined;
+        }) || null;
       } else {
         o = opts.find((x) => x.value === pick) || opts.find((x) => norm(x.textContent) === norm(pick)) || null;
       }
       if (!o) return { ok: false, error: 'no option matches ' + describePick(pick) };
       chosen.push(o);
     }
-    if (!el.multiple) { el.value = chosen.length ? chosen[0].value : ''; }
+    // Set the selected option object directly. Assigning `select.value` can only
+    // address the first option with that value, so duplicate-value options with
+    // different labels would silently select the wrong one.
+    if (!el.multiple) {
+      if (!chosen.length) {
+        el.value = '';
+      } else {
+        const idx = opts.indexOf(chosen[0]);
+        for (const o of opts) o.selected = o === chosen[0];
+        if (idx >= 0) { try { el.selectedIndex = idx; } catch {} }
+      }
+    }
     else { for (const o of opts) o.selected = chosen.includes(o); }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));

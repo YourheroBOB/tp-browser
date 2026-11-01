@@ -132,7 +132,24 @@ if (-not $Restart) {
     } catch {}
 }
 
-# 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes.
+# 4. Preflight: resolve node.exe and the daemon entrypoint BEFORE touching any live process.
+#    If either is missing we must fail fast and leave the running daemon/browser completely untouched.
+$NodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
+if (-not $NodeBin) {
+    foreach ($nc in @("C:\Program Files\nodejs\node.exe", "$env:LOCALAPPDATA\Programs\nodejs\node.exe")) {
+        if (Test-Path $nc) { $NodeBin = $nc; break }
+    }
+}
+if (-not $NodeBin) {
+    [Console]::Error.WriteLine("ERROR: node.exe not found!")
+    exit 1
+}
+if (-not (Test-Path $DaemonJs)) {
+    [Console]::Error.WriteLine("ERROR: daemon entrypoint not found: $DaemonJs")
+    exit 1
+}
+
+# 5. Flush active cookies & storage and gracefully close browser via CDP before stopping processes.
 #    The Stop-Process sweep below terminates EVERY ego daemon, including a stale one still
 #    sitting on the other port pair (9772 vs 9774). Flushing only the port we are about to
 #    start left that other stack's Chrome to be hard-killed by Stop-Process -Force, which can
@@ -179,18 +196,7 @@ if ($Remaining.Count -gt 0) {
     if (Test-Path $lockPath) { Remove-Item -Force $lockPath -ErrorAction SilentlyContinue }
 }
 
-# 5. Discover Node.js binary & initialize profile (Bookmarks Bar + Favicons)
-$NodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
-if (-not $NodeBin) {
-    foreach ($nc in @("C:\Program Files\nodejs\node.exe", "$env:LOCALAPPDATA\Programs\nodejs\node.exe")) {
-        if (Test-Path $nc) { $NodeBin = $nc; break }
-    }
-}
-if (-not $NodeBin) {
-    [Console]::Error.WriteLine("ERROR: node.exe not found!")
-    exit 1
-}
-
+# 6. Initialize profile (Bookmarks Bar + Favicons) with the node.exe already verified in step 4
 $ProfileInitJs = Join-Path $DataDir "tools\profile-init.js"
 if (-not (Test-Path $ProfileInitJs)) {
     $ProfileInitJs = Join-Path (Split-Path $PSScriptRoot -Parent) "tools\profile-init.js"
@@ -199,13 +205,13 @@ if (Test-Path $ProfileInitJs) {
     & $NodeBin $ProfileInitJs 2>$null | Out-Null
 }
 
-# 6. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens
+# 7. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens
 $AltFlag = if ($UseAlt) { " --alt-port" } else { "" }
 $DaemonCmdLine = "`"$NodeBin`" --experimental-websocket `"$DaemonJs`"$AltFlag"
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine } | Out-Null
 Start-Sleep -Milliseconds 400
 
-# 7. Launch Chrome/Edge with CDP on $ChromePort
+# 8. Launch Chrome/Edge with CDP on $ChromePort
 $StartUrl = if ($Headed) { "http://127.0.0.1:$DaemonPort/newtab" } else { "about:blank" }
 $GuiMarker = if ($Headed) { " --tp-interactive-gui=1" } else { " --disable-extensions" }
 $CommonFlags = "--no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=$ChromePort `"--user-data-dir=$ProfileDir`" --window-size=1440,900 --disable-blink-features=AutomationControlled --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --noerrdialogs --disable-popup-blocking --disable-quic --disable-features=msEdgeSidebarV2,msHub,msWelcomePage,Translate$GuiMarker $StartUrl"
@@ -257,7 +263,7 @@ if ($Headed -and $CurrentSessionId -eq 0) {
     & schtasks.exe /Delete /TN "TooPowerBrowserHeaded" /F 2>$null | Out-Null
 }
 
-# 8. Wait up to 12s for daemon + chrome attachment and print verification indicators
+# 9. Wait up to 12s for daemon + chrome attachment and print verification indicators
 for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Milliseconds 500
     try {

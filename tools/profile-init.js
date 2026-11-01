@@ -30,7 +30,9 @@ prefs.bookmark_bar.show_on_all_tabs = true;
 prefs.session = isPlainObject(prefs.session) ? prefs.session : {};
 prefs.session.restore_on_startup = 1;
 prefs.profile = isPlainObject(prefs.profile) ? prefs.profile : {};
-if (!prefs.profile.name || prefs.profile.name === 'Person 1' || prefs.profile.name === '第一位使用者') {
+const profileName = prefs.profile.name;
+if (typeof profileName !== 'string' || profileName.trim() === '' ||
+    profileName === 'Person 1' || profileName === '第一位使用者') {
   prefs.profile.name = '⚡ TooPower';
 }
 prefs.profile.exit_type = 'Normal';

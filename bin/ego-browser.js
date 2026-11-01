@@ -47,6 +47,8 @@ function launcherExitCode(r, label) {
   return r.status;
 }
 
+// 回傳 { code, label }：code 是啟動器退出碼（語意見 launcherExitCode），label 是被執行的啟動器路徑。
+// label 讓呼叫端能把「哪一支啟動器失敗」寫進錯誤訊息，而不是只丟出一個沒有上下文的數字。
 function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
   const stdio = quietStdout ? ['ignore', process.stderr, process.stderr] : 'inherit';
   if (process.platform === 'win32') {
@@ -62,7 +64,7 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
       else if (a === '--chrome' || a === '-Chrome' || a === 'chrome') psArgs.push('-Chrome');
     }
     const r = spawnSync('powershell.exe', psArgs, { stdio });
-    return launcherExitCode(r, script);
+    return { code: launcherExitCode(r, script), label: script };
   } else {
     const script = resolveScript(mode === 'stop' ? 'tp-stop.sh' : 'tp-start.sh', 'ego-start.ps1');
     const shArgs = [script];
@@ -70,7 +72,7 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
     if (mode === 'restart') shArgs.push('--restart');
     shArgs.push(...extraArgs);
     const r = spawnSync('/bin/sh', shArgs, { stdio });
-    return launcherExitCode(r, script);
+    return { code: launcherExitCode(r, script), label: script };
   }
 }
 
@@ -114,20 +116,22 @@ async function ensureRunning() {
   let port = readPort();
   let h = await health(port);
   if (h && h.ok && h.chrome) return { port, h };
-  runLauncher('start', [], true);
+  const launcher = runLauncher('start', [], true);
   port = readPort();
   h = await health(port);
-  return { port, h };
+  // 啟動器失敗（找不到瀏覽器、權限、腳本本身錯誤…）時不要吞掉它：
+  // 把 { code, label } 一起回傳，讓呼叫端能把「退出碼 + 啟動器標籤」寫進錯誤訊息。
+  return { port, h, launcher };
 }
 
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0] || 'help';
 
-  if (sub === 'start' || sub === '--start') { process.exitCode = runLauncher('start', argv.slice(1)); return; }
-  if (sub === 'headed' || sub === '--headed' || sub === '-Headed') { process.exitCode = runLauncher('headed', argv.slice(1)); return; }
-  if (sub === 'restart' || sub === '--restart') { process.exitCode = runLauncher('restart', argv.slice(1)); return; }
-  if (sub === 'stop' || sub === '--stop') { process.exitCode = runLauncher('stop', argv.slice(1)); return; }
+  if (sub === 'start' || sub === '--start') { process.exitCode = runLauncher('start', argv.slice(1)).code; return; }
+  if (sub === 'headed' || sub === '--headed' || sub === '-Headed') { process.exitCode = runLauncher('headed', argv.slice(1)).code; return; }
+  if (sub === 'restart' || sub === '--restart') { process.exitCode = runLauncher('restart', argv.slice(1)).code; return; }
+  if (sub === 'stop' || sub === '--stop') { process.exitCode = runLauncher('stop', argv.slice(1)).code; return; }
   if (sub === 'nodejs') return runNodeJs(argv.slice(1));
   if (sub === 'status' || sub === 'spaces') {
     const port = readPort();
@@ -205,10 +209,25 @@ async function doctor() {
   if (h && !h.chrome) console.log('  daemon is up but Chromium not attached; it retries every 3s once chrome answers.');
 }
 
+const NODEJS_USAGE = "usage: tp-browser nodejs -e 'code'          run an agent script passed on the command line\n" +
+  "       tp-browser nodejs <<'EOF' ... EOF   pipe the script via stdin/heredoc";
+
+// 參數錯誤必須在 ensureRunning() 之前就結束。舊版 `nodejs -e`（後面沒帶程式碼）會把 code
+// 變成空字串 → 照樣去叫 tp-start.sh → 最後用「daemon 不在線」誤導使用者；若 daemon 剛好在線，
+// 甚至會執行空腳本並 exit 0，使用者完全看不出自己打錯參數。
+function nodeJsUsageError(reason) {
+  console.error(`tp-browser nodejs: ${reason}`);
+  console.error(NODEJS_USAGE);
+  process.exit(2);
+}
+
 async function runNodeJs(args) {
   let code = null;
-  if (args[0] === '-e') code = args[1];
-  else {
+  if (args[0] === '-e') {
+    if (args[1] === undefined) nodeJsUsageError('missing script code after -e');
+    code = args[1];
+    if (String(code).replace(/^\uFEFF/, '').trim() === '') nodeJsUsageError('-e was given an empty script code');
+  } else {
     code = await new Promise((resolve) => {
       let buf = '';
       if (process.stdin.isTTY) { console.error('tp-browser nodejs: pass -e "code" or pipe a heredoc'); process.exit(2); }
@@ -219,8 +238,11 @@ async function runNodeJs(args) {
   }
   code = String(code || '').replace(/^\uFEFF/, '');
 
-  const { port, h } = await ensureRunning();
+  const { port, h, launcher } = await ensureRunning();
   if (!h || !h.ok) {
+    if (launcher && launcher.code !== 0) {
+      console.error(`tp-browser: launcher ${launcher.label} exited with code ${launcher.code}; the daemon did not come up.`);
+    }
     console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`);
     console.error('Start TooPower Browser first:  tp-start  (or: tp-headed)');
     process.exit(2);

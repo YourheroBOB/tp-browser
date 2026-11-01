@@ -230,6 +230,17 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+// Browsers attach Sec-Fetch-Site to every request they make. A malicious page can
+// trigger a plain GET against 127.0.0.1 (e.g. <img src>, top-level navigation)
+// WITHOUT any Origin header, so the Origin/Host guard alone does not stop
+// cross-site calls to state-changing endpoints such as /flush-and-close.
+// Command-line callers (curl in tp-stop.sh / ego-stop.ps1, CLI, SDK) send no
+// Sec-Fetch-Site at all, and same-origin calls from the served pages stay allowed.
+function isBrowserCrossSite(req) {
+  const site = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  return site !== '' && site !== 'none' && site !== 'same-origin';
+}
+
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -246,7 +257,7 @@ const server = createServer(async (req, res) => {
     }
     return;
   }
-  if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
+  if (isBrowserCrossSite(req) || req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
     res.writeHead(403).end('forbidden host/origin');
     return;
   }
@@ -270,10 +281,17 @@ const server = createServer(async (req, res) => {
     if (!checkToken(req)) { res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'AuthError', message: 'bad token' } })); return; }
     const chunks = [];
     let total = 0;
+    let tooLarge = false;
+    // Keep reading past the cap so the client always receives the 413 instead of
+    // an opaque ECONNRESET; stop buffering so memory stays bounded at ~1 MiB.
     for await (const c of req) {
       total += c.length;
-      if (total > 1048576) { req.destroy(); return; }
+      if (total > 1048576) { tooLarge = true; continue; }
       chunks.push(c);
+    }
+    if (tooLarge) {
+      res.writeHead(413, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'PayloadTooLarge', message: 'request body exceeds 1048576 bytes' } }));
+      return;
     }
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }

@@ -149,7 +149,30 @@ Get-CimInstance Win32_Process | Where-Object {
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
-Start-Sleep -Milliseconds 800
+
+function Get-EgoProcesses {
+    @(Get-CimInstance Win32_Process | Where-Object {
+        ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
+        ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
+    })
+}
+
+# Stop-Process only requests termination. A browser that has not exited yet still
+# holds the profile, so deleting its Singleton lock and launching a second browser
+# fails; wait up to ~5s and never touch the lock while anything is left.
+$Remaining = @()
+for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
+    Start-Sleep -Milliseconds 250
+    $Remaining = @(Get-EgoProcesses)
+    if ($Remaining.Count -eq 0) { break }
+    foreach ($Proc in $Remaining) {
+        Stop-Process -Id $Proc.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+if ($Remaining.Count -gt 0) {
+    Write-Output "EGO_NOT_READY (profile still in use)"
+    exit 1
+}
 
 @("SingletonLock", "SingletonCookie", "SingletonSocket") | ForEach-Object {
     $lockPath = Join-Path $ProfileDir $_

@@ -77,7 +77,17 @@ fi
 # Discover Chromium/Chrome/Edge/Brave before touching any existing processes.
 OS="$(uname -s)"
 BROWSER_BIN="${TP_BROWSER_BIN:-}"
-if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
+if [ -n "$BROWSER_BIN" ]; then
+  # TP_BROWSER_BIN is an explicit user override: never silently fall back to a
+  # different browser. Reject a bad path *before* flushing or killing anything,
+  # so the currently running daemon/profile is left exactly as it was.
+  if [ ! -f "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
+    echo "ERROR: TP_BROWSER_BIN is set to '$BROWSER_BIN' but that path is not an executable file." >&2
+    echo "       Refusing to auto-detect another browser. Fix TP_BROWSER_BIN, or unset it to let tp-start.sh probe." >&2
+    echo "       Nothing was flushed, stopped or launched." >&2
+    exit 1
+  fi
+else
   if [ "$OS" = "Darwin" ]; then
     for c in \
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \

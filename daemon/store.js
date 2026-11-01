@@ -1,6 +1,6 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export class Store {
@@ -22,7 +22,15 @@ export class Store {
       writeFileSync(tmp, body);
       renameSync(tmp, this.file);
     } catch {
-      writeFileSync(this.file, body);
+      try {
+        // rename 可能因 Windows 防毒／索引器鎖檔（EPERM）、跨裝置（EXDEV）
+        // 或目標型別不符（EISDIR）而失敗：退回直接覆寫正本，資料仍會落地。
+        writeFileSync(this.file, body);
+      } finally {
+        // 不論直接寫入成功或失敗（例外照樣往外丟），都不能把
+        // `${file}.${pid}.tmp` 留在磁碟上。
+        try { unlinkSync(tmp); } catch { /* 暫存檔不存在、已被 rename 搬走，或本身無法移除 */ }
+      }
     }
   }
   list() { return Object.values(this.data.spaces); }
@@ -67,7 +75,11 @@ export class Store {
   removePage(spaceId, label) {
     const s = this.get(spaceId);
     if (!s) return;
+    const page = s.pages[label];
     delete s.pages[label];
+    // 被移除的分頁若正好是作用中的 target，activeTargetId 必須一起清掉，
+    // 否則 ledger 會一直指向已不存在的 targetId。
+    if (page && page.targetId != null && page.targetId === s.activeTargetId) s.activeTargetId = null;
     this.persist();
   }
   deleteSpace(id) { delete this.data.spaces[id]; this.persist(); }

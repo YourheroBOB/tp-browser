@@ -16,7 +16,7 @@
 |---|---|---|
 | **高** | 可能造成資料遺失、狀態不一致、安全邊界失效或對外承諾跳票 | 排入最近一次修補，補測試 |
 | **中** | 特定情境會故障、難以維護或擴大爆炸半徑 | 排入 1–2 個 sprint，附重現或觀測 |
-| **低** | 一致性、可讀性或跨平台小瑕疵 | 合併於相邻改動一併修 |
+| **低** | 一致性、可讀性或跨平台小瑕疵 | 合併於相鄰改動一併修 |
 
 ## 3. 結果摘要
 
@@ -49,7 +49,7 @@
 | 3 | 將 `fmb_feature2/reaper.js` 以低頻計時器整合進 daemon；維持「live 集合為空→不動作」安全閥；先只觀察 `stats` | F-08 | 1–2 pd | 低 | 需在第 1、2 項之後；預設保守 policy 一週後再放寬 |
 | 4 | 補齊 README 宣稱的 `tools/cookies-export.ego.js`／`tools/cookies-import.ego.js`，或修正 README | F-30 | 0.5 pd（只修文件）/ 3–5 pd（含加密實作） | 中（實作）/ 低（文件） | 若實作：預設 `0600`、跨機預設加密、測試只用假 cookie＋`tmpdir()` |
 | 5 | 安裝器供應鏈硬化：固定 tag／commit＋checksum、版本化目錄原子安裝、Node 版本閘、複製完整 `tests/` | F-18、F-19、F-20、F-22、F-28 | 1–2 pd | 中 | 遠端一鍵安裝是主要供應鏈面；改動需保留本機 clone 安裝路徑 |
-| 6 | `tp-start.sh` 可靠性与安全：token 即時 `0600`、root 處理、spawn 錯誤可見、啟動失敗清理、`flock` 防重入 | F-23、F-24、F-25、F-26、F-27 | 1–2 pd | 中 | root 拒絕可能影響現有 WSL2 用法，需環境變數覆寫與 BOB 決策 |
+| 6 | `tp-start.sh` 可靠性與安全：token 即時 `0600`、root 處理、spawn 錯誤可見、啟動失敗清理、`flock` 防重入 | F-23、F-24、F-25、F-26、F-27 | 1–2 pd | 中 | root 拒絕可能影響現有 WSL2 用法，需環境變數覆寫與 BOB 決策 |
 | 7 | `daemon/cdp.js` 生命週期：close 時一併清理 pending timer、`once()` 於斷線 reject、`send()` race 防護 | F-09、F-10、F-11 | 0.5 pd | 低 | 補 `tests/test_fmb_cdp.test.mjs` 斷線／逾時案例 |
 | 8 | `daemon/keys.js` 跨平台語意：`ControlOrMeta` 依 `process.platform` 解析、單字元大寫補 Shift、標點補 `code` | F-13、F-14、F-15 | 0.5 pd | 低 | 需確認上層 dispatch 端一併處理 modifier bit |
 | 9 | 版本號單一來源（`package.json` `0.3.0` vs CLI `0.3.1`）與發佈一致性閘 | F-29 | 0.5 pd | 低 | 需協調第一個 `vX.Y.Z` tag 時點 |
@@ -68,5 +68,5 @@
 1. 第 4 項：Cookie 工具「直接實作（建議預設加密）」還是「先修正 README、工具另案排期」？
 2. 第 3 項：reaper 上線 policy 初值（本報告建議 `idleSpaceMs: 6h`、`maxSpaces: 500` 先觀察一週）。
 3. 第 6 項：是否允許 root 下以 `--no-sandbox` 啟動 Chrome（建議預設拒絕，`TP_ALLOW_ROOT=1` 覆寫）？
-4. 第 5 項：遠端一鍵安裝是否改為固定 tag＋checksum，並何時凍結 0.3.x 打第一個 tag？
+4. 第 5 項：遠端一鍵安裝是否改為固定 tag＋checksum，並何時為 0.3.x 凍結版本並打第一個 tag？
 5. 未審模組（daemon HTTP 資安邊界、`page-ops.js` 路徑防護、`inpage.agent.js` 信任邊界）是否列為正式支援前的必要審查項目？

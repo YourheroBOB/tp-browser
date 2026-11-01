@@ -158,7 +158,18 @@ async function main() {
     return;
   }
   if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
-  console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
+  // 明確求助（含不帶參數時 sub==='help'）→ usage 印在 stdout、exit 0。
+  if (sub === 'help' || sub === '--help' || sub === '-h') { console.log(usage()); return; }
+  // 未知子命令：unknown command 與 usage 改印到 stderr，並以非 0（2）結束。
+  // 舊寫法把拼錯的指令（例如把 start 打成 strat）當成 help 印 usage 還回 0，
+  // 自動化流程因此誤判「已經啟動」。
+  console.error(`tp-browser: unknown command: ${sub}`);
+  console.error(usage());
+  process.exitCode = 2;
+}
+
+function usage() {
+  return `TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
   tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc (auto-starts if needed)
   tp-browser start                  start headless background browser (alias: tp-start / ego-start)
@@ -168,7 +179,7 @@ usage:
   tp-browser spaces                 list task spaces
   tp-browser doctor                 diagnose and print fix commands
   tp-browser skill                  print the AI Agent SKILL.md guide
-  tp-browser version                print version and platform build`);
+  tp-browser version                print version and platform build`;
 }
 
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }
@@ -213,6 +224,9 @@ async function doctor() {
     }
   }
   if (h && !h.chrome) console.log('  daemon is up but Chromium not attached; it retries every 3s once chrome answers.');
+  // daemon 或 chrome 任一不健康（含 daemon 在線但 chrome 未附掛）→ 印完修復指令後以非 0 結束。
+  // 舊寫法只印 NOT RUNNING / NOT REACHABLE 卻回 0，自動化流程因此把故障環境誤判為正常。
+  if (!(h && h.ok && h.chrome && chromeOk)) process.exitCode = 2;
 }
 
 // ── thrown 值安全格式化 ──────────────────────────────────────────────

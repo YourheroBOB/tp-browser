@@ -187,9 +187,12 @@ if (bestCandidate) {
     } catch {}
   }
 
-  // Always ensure Favicons SQLite DB is synced 1:1 if missing, smaller than source, or --force
+  // Sync Favicons only when the destination is missing/empty, clearly smaller than the source
+  // (< 50% of the source), or --force is set. An absolute destination size threshold is wrong:
+  // a larger or byte-identical destination would be overwritten on every startup, wiping the
+  // favicons the agent profile accumulated for itself.
   const curFavSz = fileSize(dstFavicons);
-  if (bestCandidate.favSz > 0 && (forceSync || curFavSz < 100000 || curFavSz < bestCandidate.favSz * 0.5)) {
+  if (bestCandidate.favSz > 0 && (forceSync || curFavSz === 0 || curFavSz < bestCandidate.favSz * 0.5)) {
     try {
       replaceSqliteFile(bestCandidate.favFile, dstFavicons);
       console.log(`Synced Favicons DB (${Math.round(bestCandidate.favSz / 1024)} KB) from: ${bestCandidate.favFile}`);

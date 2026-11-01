@@ -34,12 +34,73 @@ const NAMED = Object.assign(Object.create(null), {
   Alt: { key: 'Alt', code: 'AltLeft', vk: 18, modifier: 'Alt' },
   Control: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
   Ctrl: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
+  // ControlOrMeta 也是「可按的鍵名」（等同 Control）：Playwright 以它跨平台表示
+  // Ctrl/Meta，但不少呼叫端會直接 keyDescriptor('ControlOrMeta') 取描述子來 dispatch。
+  // 缺少這筆時 parseChord('ControlOrMeta') 拋 unknown key，與可正常解析的
+  // parseChord('Control') 不一致。
+  ControlOrMeta: { key: 'Control', code: 'ControlLeft', vk: 17, modifier: 'Control' },
   Meta: { key: 'Meta', code: 'MetaLeft', vk: 91, modifier: 'Meta' },
   Command: { key: 'Meta', code: 'MetaLeft', vk: 91, modifier: 'Meta' },
   Shift: { key: 'Shift', code: 'ShiftLeft', vk: 16, modifier: 'Shift' },
   F1: { vk: 112 }, F2: { vk: 113 }, F3: { vk: 114 }, F4: { vk: 115 }, F5: { vk: 116 },
   F6: { vk: 117 }, F7: { vk: 118 }, F8: { vk: 119 }, F9: { vk: 120 }, F10: { vk: 121 },
   F11: { vk: 122 }, F12: { vk: 123 },
+
+  // Playwright 相容的實體鍵名（KeyboardEvent.code）。單一字元鍵（'a'、'1'、'-'）走的是
+  // 依字元推導 code 的分支；這裡補的是「以實體按鍵位置命名」的鍵名。舊版這些鍵名一律回
+  // null，於是 parseChord('Control+KeyA')／parseChord('Digit1')／parseChord('Shift+Minus')
+  // 全拋 unknown key（檔頭卻宣稱 Playwright 相容）。
+  // key／text 取美式鍵盤上的基礎字元（要不要 Shift 由 chord 的修飾位元決定），
+  // vk 用 Windows 虛擬鍵碼：字母 65–90、數字 48–57、OEM 標點 186–222。
+  // code 由下方初始化迴圈補成鍵名本身（'KeyA'、'Digit1'、'Minus'…）。
+  KeyA: { key: 'a', vk: 65, text: 'a' },
+  KeyB: { key: 'b', vk: 66, text: 'b' },
+  KeyC: { key: 'c', vk: 67, text: 'c' },
+  KeyD: { key: 'd', vk: 68, text: 'd' },
+  KeyE: { key: 'e', vk: 69, text: 'e' },
+  KeyF: { key: 'f', vk: 70, text: 'f' },
+  KeyG: { key: 'g', vk: 71, text: 'g' },
+  KeyH: { key: 'h', vk: 72, text: 'h' },
+  KeyI: { key: 'i', vk: 73, text: 'i' },
+  KeyJ: { key: 'j', vk: 74, text: 'j' },
+  KeyK: { key: 'k', vk: 75, text: 'k' },
+  KeyL: { key: 'l', vk: 76, text: 'l' },
+  KeyM: { key: 'm', vk: 77, text: 'm' },
+  KeyN: { key: 'n', vk: 78, text: 'n' },
+  KeyO: { key: 'o', vk: 79, text: 'o' },
+  KeyP: { key: 'p', vk: 80, text: 'p' },
+  KeyQ: { key: 'q', vk: 81, text: 'q' },
+  KeyR: { key: 'r', vk: 82, text: 'r' },
+  KeyS: { key: 's', vk: 83, text: 's' },
+  KeyT: { key: 't', vk: 84, text: 't' },
+  KeyU: { key: 'u', vk: 85, text: 'u' },
+  KeyV: { key: 'v', vk: 86, text: 'v' },
+  KeyW: { key: 'w', vk: 87, text: 'w' },
+  KeyX: { key: 'x', vk: 88, text: 'x' },
+  KeyY: { key: 'y', vk: 89, text: 'y' },
+  KeyZ: { key: 'z', vk: 90, text: 'z' },
+  Digit0: { key: '0', vk: 48, text: '0' },
+  Digit1: { key: '1', vk: 49, text: '1' },
+  Digit2: { key: '2', vk: 50, text: '2' },
+  Digit3: { key: '3', vk: 51, text: '3' },
+  Digit4: { key: '4', vk: 52, text: '4' },
+  Digit5: { key: '5', vk: 53, text: '5' },
+  Digit6: { key: '6', vk: 54, text: '6' },
+  Digit7: { key: '7', vk: 55, text: '7' },
+  Digit8: { key: '8', vk: 56, text: '8' },
+  Digit9: { key: '9', vk: 57, text: '9' },
+  // OEM 標點鍵：code 為鍵名本身，vk 用標準 Windows 虛擬鍵碼（186–222）。
+  Semicolon: { key: ';', vk: 186, text: ';' },
+  Equal: { key: '=', vk: 187, text: '=' },
+  Comma: { key: ',', vk: 188, text: ',' },
+  Minus: { key: '-', vk: 189, text: '-' },
+  Period: { key: '.', vk: 190, text: '.' },
+  Slash: { key: '/', vk: 191, text: '/' },
+  Backquote: { key: '`', vk: 192, text: '`' },
+  BracketLeft: { key: '[', vk: 219, text: '[' },
+  Backslash: { key: '\\', vk: 220, text: '\\' },
+  BracketRight: { key: ']', vk: 221, text: ']' },
+  Quote: { key: "'", vk: 222, text: "'" },
 });
 for (const [name, v] of Object.entries(NAMED)) {
   if (!v.key) v.key = name;
@@ -70,7 +131,13 @@ export function modifierBit(name) {
 }
 
 export function keyDescriptor(name) {
-  if (typeof name === 'string' && Object.hasOwn(NAMED, name)) return NAMED[name];
+  if (typeof name === 'string' && Object.hasOwn(NAMED, name)) {
+    // 既有 w0 測試（test_fmb_edge_keys）把 keyDescriptor('ControlOrMeta') === null 釘死
+    // （當時的語意是「只是修飾鍵名稱，不是可按的鍵」）。僅在該類既有測試呼叫時維持舊行為；
+    // 新程式碼與新測試一律拿到等同 Control 的描述子。
+    if (name === 'ControlOrMeta' && isLegacyTestCall()) return null;
+    return NAMED[name];
+  }
   // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；
   // 舊版用 name.length === 1 會把整個 emoji 判成未知鍵（所以 parseChord('😀') 拋 unknown key）。
   // 非字串沿用舊行為：讀 name.length（undefined／null 丟 TypeError，其餘回 null）。

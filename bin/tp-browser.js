@@ -86,7 +86,7 @@ function readPort() {
   if (existsSync(DAEMON_JSON)) {
     try {
       const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port;
-      if (p === 9774) return 9774;
+      if (Number.isInteger(p) && p > 0 && p <= 65535) return p;
     } catch {}
   }
   return 9772;
@@ -95,7 +95,7 @@ function readChromePort() {
   if (existsSync(DAEMON_JSON)) {
     try {
       const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).chromePort;
-      if (p === 9775) return 9775;
+      if (Number.isInteger(p) && p > 0 && p <= 65535) return p;
     } catch {}
   }
   return 9773;
@@ -106,7 +106,11 @@ function daemonBase(port) {
   return `http://127.0.0.1:${port}`;
 }
 function chromeVersionUrl(chromePort) {
-  return chromePort === 9775 ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
+  // 與 daemonBase 同一個病灶：舊寫法只認 9775，其餘一律導回 9773。
+  // 若 daemon.json 指定了其他（合法的）chromePort，`tp-browser doctor` 會去探測錯的埠，
+  // 運氣不好還會探到機器上「另一個」Chrome 的 CDP，並回報錯誤的 Browser 版本。
+  // 直接採用傳入的埠，對既有 9773／9775 兩種情況結果完全相同。
+  return `http://127.0.0.1:${chromePort}/json/version`;
 }
 
 async function health(port) {

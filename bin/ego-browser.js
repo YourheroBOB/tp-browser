@@ -279,6 +279,20 @@ function thrownStack(value) {
 }
 
 async function runNodeJs(args) {
+  // ── 參數檢查：在連線／啟動任何東西之前就擋掉 ──────────────────────
+  // 舊寫法只認 args[0]==='-e'，其餘一律靜默改讀 stdin：使用者誤傳檔案路徑
+  // （`nodejs ./x.js`）、`--eval`、`-c`、`--help` 時參數被無聲丟棄；若 stdin 又是
+  // /dev/null 或空管線（agent／CI 常見），接下來還會先 ensureRunning() 把整個瀏覽器
+  // 拉起來，再執行一支空腳本並 exit 0——看起來成功，其實什麼都沒做。
+  // 現在只要第一個參數不是 -e 卻又帶了任何參數，就是用法錯誤：exit 2、不連線、不啟動。
+  if (args.length > 0 && args[0] !== '-e') {
+    console.error(`tp-browser nodejs: unrecognized argument(s): ${args.join(' ')}`);
+    console.error('tp-browser nodejs: the script must come from -e "code" or stdin (heredoc); file paths are not accepted.');
+    console.error('tp-browser nodejs:   tp-browser nodejs -e "code"');
+    console.error("tp-browser nodejs:   tp-browser nodejs <<'EOF' … EOF");
+    process.exit(2);
+  }
+
   let code = null;
   if (args[0] === '-e') {
     // `-e` 少了腳本字串時，舊寫法把 undefined 靜靜變成空腳本：先透過 ensureRunning() 去連
@@ -306,6 +320,15 @@ async function runNodeJs(args) {
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
+
+  // 空腳本（去除 BOM 與空白後）→ 用法錯誤。stdin 是 /dev/null 或空管線時（agent／CI
+  // 很常見），舊寫法會先 ensureRunning() 啟動瀏覽器，再跑一支空腳本並 exit 0。
+  // 這個檢查必須排在 ensureRunning() 之前：不得連線、不得啟動任何東西。
+  if (code.trim() === '') {
+    console.error('tp-browser nodejs: the script is empty (after stripping BOM and whitespace).');
+    console.error('tp-browser nodejs: pass the code with -e "code" or pipe a non-empty script via stdin / heredoc.');
+    process.exit(2);
+  }
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {

@@ -271,22 +271,56 @@ function thrownStack(value) {
 }
 
 async function runNodeJs(args) {
+  // ── 參數檢查：在連線／啟動任何東西之前就擋掉 ──────────────────────
+  // 舊寫法只認 args[0]==='-e'，其餘一律靜默改讀 stdin：使用者誤傳檔案路徑
+  // （`nodejs ./x.js`）、`--eval`、`-c`、`--help` 時參數被無聲丟棄；若 stdin 又是
+  // /dev/null 或空管線（agent／CI 常見），接下來還會先 ensureRunning() 把整個瀏覽器
+  // 拉起來，再執行一支空腳本並 exit 0——看起來成功，其實什麼都沒做。
+  // 現在只要第一個參數不是 -e 卻又帶了任何參數，就是用法錯誤：exit 2、不連線、不啟動。
+  if (args.length > 0 && args[0] !== '-e') {
+    console.error(`tp-browser nodejs: unrecognized argument(s): ${args.join(' ')}`);
+    console.error('tp-browser nodejs: the script must come from -e "code" or stdin (heredoc); file paths are not accepted.');
+    console.error('tp-browser nodejs:   tp-browser nodejs -e "code"');
+    console.error("tp-browser nodejs:   tp-browser nodejs <<'EOF' … EOF");
+    process.exit(2);
+  }
+
   let code = null;
-  if (args[0] === '-e') code = args[1];
-  else {
-    code = await new Promise((resolve) => {
+  if (args[0] === '-e') {
+    // `-e` 少了腳本字串時，舊寫法把 undefined 靜靜變成空腳本：先透過 ensureRunning() 去連
+    // 甚至啟動／重啟整個瀏覽器，再「成功」執行一支什麼都不做的腳本，使用者只看到 exit 0。
+    // 改成在連線／啟動任何東西之前就回報用法錯誤（與 ego-browser.js 對應段落一致）。
+    if (args.length < 2) {
+      console.error('tp-browser nodejs: -e requires a script string, e.g. -e "console.log(1)"');
+      console.error('tp-browser nodejs: or pipe the script via stdin / heredoc');
+      process.exit(2);
+    }
+    code = args[1];
+  } else {
+    code = await new Promise((resolve, reject) => {
       let buf = '';
       if (process.stdin.isTTY) { console.error('tp-browser nodejs: pass -e "code" or pipe a heredoc'); process.exit(2); }
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (d) => { buf += d; });
+      // 少了這行，stdin 讀取失敗（EPIPE／EIO／Windows 上已關閉的管線）不會觸發 'end'，
+      // 這個 Promise 永遠不 settle，CLI 就卡在事件迴圈裡永遠不結束。
+      process.stdin.on('error', reject);
       process.stdin.on('end', () => resolve(buf));
-      process.stdin.once('error', (e) => {
-        console.error(`tp-browser nodejs: failed to read stdin: ${e.message}`);
-        process.exit(2);
-      });
+    }).catch((e) => {
+      try { console.error(`tp-browser nodejs: failed to read the script from stdin: ${describeThrown(e)}`); } catch {}
+      process.exit(2);
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
+
+  // 空腳本（去除 BOM 與空白後）→ 用法錯誤。stdin 是 /dev/null 或空管線時（agent／CI
+  // 很常見），舊寫法會先 ensureRunning() 啟動瀏覽器，再跑一支空腳本並 exit 0。
+  // 這個檢查必須排在 ensureRunning() 之前：不得連線、不得啟動任何東西。
+  if (code.trim() === '') {
+    console.error('tp-browser nodejs: the script is empty (after stripping BOM and whitespace).');
+    console.error('tp-browser nodejs: pass the code with -e "code" or pipe a non-empty script via stdin / heredoc.');
+    process.exit(2);
+  }
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {
@@ -304,11 +338,14 @@ async function runNodeJs(args) {
   }
   globalThis.Page = sdk.Page; globalThis.TaskSpace = sdk.TaskSpace;
 
-  const tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
-  const tmp = join(tmpDir, 'script.mjs');
-  writeFileSync(tmp, code, { mode: 0o600 });
+  // mkdtempSync／writeFileSync 一起放進 try：舊寫法若這裡失敗（磁碟滿、權限、暫存目錄不可寫），
+  // 例外會往外丟，finally 不會執行，0700 的暫存目錄就永遠留在 tmpdir 裡沒人清。
+  let tmpDir = null;
   let exitCode = 0;
   try {
+    tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
+    const tmp = join(tmpDir, 'script.mjs');
+    writeFileSync(tmp, code, { mode: 0o600 });
     await import(pathToFileURL(tmp).href);
   } catch (e) {
     // thrown 值不一定是 Error。整段回報再用一層 try 包住，
@@ -323,10 +360,16 @@ async function runNodeJs(args) {
       // 連 stderr 都寫不出去時，仍然要讓程序結束，不能卡在事件迴圈裡。
     }
   } finally {
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    if (tmpDir) {
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
   }
   // The SSE event stream keeps the event loop alive; a CLI must exit explicitly.
-  process.exit(exitCode);
+  // 使用者腳本可以用 `process.exitCode = N` 表示失敗（這是不截斷 stdout 的安全慣例）；
+  // 舊寫法 `process.exit(exitCode)` 在腳本成功時把它蓋成 0，自動化因此把失敗腳本當成功。
+  const scriptExit = Number(process.exitCode);
+  const finalCode = exitCode !== 0 ? exitCode : (Number.isInteger(scriptExit) ? scriptExit : 0);
+  process.exit(finalCode);
 }
 
 main().catch((e) => {

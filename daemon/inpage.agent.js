@@ -132,7 +132,10 @@
         const cssPart = body.slice(0, hi);
         const mm = body.slice(hi).match(/^:(has-text|text-is)\(("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\)$/);
         if (!mm) return { kind: 'invalid' };
-        return { kind: 'cssText', css: cssPart, mode: mm[1], text: mm[2].slice(1, -1), nth };
+        // Strip the surrounding quotes AND the backslash escapes inside them, the
+        // same way text= already does: css=button:has-text('it\'s') has to look for
+        // `it's` on the page, never for a literal backslash (which never matches).
+        return { kind: 'cssText', css: cssPart, mode: mm[1], text: unescapeQuoted(mm[2].slice(1, -1)), nth };
       }
       return { kind: 'css', value: body, nth };
     }
@@ -171,7 +174,19 @@
     const spec = parseSelector(sel);
     let els = [];
     switch (spec.kind) {
-      case 'ref': { const el = refIndex.get(spec.ref); els = el ? [el] : []; break; }
+      case 'ref': {
+        // A ref whose element has left the document must NOT resolve: the detached
+        // node still answers getBoundingClientRect() with an all-zero rect and
+        // INTERACTIVE tags sail through the requireVisible filter, so resolve()
+        // used to return count 1 + a hid + zero coordinates and the daemon clicked
+        // whatever happens to sit at (0,0). Treat it as "not found" and forget the
+        // stale refIndex entry. The explicit `=== false` keeps element stubs that
+        // do not model isConnected (undefined) on the old, non-stale path.
+        const el = refIndex.get(spec.ref) || null;
+        if (el && el.isConnected === false) { refIndex.delete(spec.ref); els = []; }
+        else if (el) els = [el];
+        break;
+      }
       case 'text': {
         const want = spec.exact ? spec.value : norm(spec.value).toLowerCase();
         // An empty text filter makes String#includes('') true for every element, so

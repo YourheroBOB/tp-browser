@@ -57,7 +57,7 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
     for (const a of extraArgs) {
       if (a === '--headed' || a === '-Headed' || a === 'headed') psArgs.push('-Headed');
       else if (a === '--restart' || a === '-Restart' || a === 'restart') psArgs.push('-Restart');
-      else if (a === '--alt-port' || a === '-AltPort') psArgs.push('-AltPort');
+      else if (a === '--alt-port' || a === '-AltPort' || a === 'alt-port') psArgs.push('-AltPort');
       else if (a === '--edge' || a === '-Edge' || a === 'edge') psArgs.push('-Edge');
       else if (a === '--chrome' || a === '-Chrome' || a === 'chrome') psArgs.push('-Chrome');
     }
@@ -181,14 +181,56 @@ usage:
 
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }
 
+// /rpc 是同步請求／回應：daemon 卡住或上游壞死時，CLI 不能永遠掛在 fetch 上。
+// 預設 15 秒；測試與現場可用 TP_RPC_TIMEOUT_MS（毫秒，正整數）覆寫。
+function rpcTimeoutMs() {
+  const raw = Number(process.env.TP_RPC_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15000;
+}
+function isJsonContentType(contentType) {
+  const ct = String(contentType || '').trim().toLowerCase();
+  if (!ct) return false;
+  return /^application\/(?:[\w.-]+\+)?json\s*(?:;.*)?$/.test(ct);
+}
+function bodySnippet(text) {
+  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
 async function rpcCmd(port, method, params) {
   const tok = readToken();
-  const res = await fetch(`${daemonBase(port)}/rpc`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tp-token': tok, 'x-ego-token': tok },
-    body: JSON.stringify({ id: 1, method, params: params || {} }),
-  });
-  const j = await res.json();
+  const timeoutMs = rpcTimeoutMs();
+  let res;
+  try {
+    res = await fetch(`${daemonBase(port)}/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-tp-token': tok, 'x-ego-token': tok },
+      body: JSON.stringify({ id: 1, method, params: params || {} }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    const name = e && typeof e.name === 'string' ? e.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError' || /timeout/i.test(name)) {
+      throw new Error(`tp-browser: /rpc timed out after ${timeoutMs}ms (timeout is controlled by TP_RPC_TIMEOUT_MS) — daemon 127.0.0.1:${port} did not respond to ${method}`);
+    }
+    throw new Error(`tp-browser: cannot reach /rpc on 127.0.0.1:${port}: ${e?.message || e}`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  const hasContentType = contentType.trim() !== '';
+  if (!res.ok || (hasContentType && !isJsonContentType(contentType))) {
+    const raw = await res.text().catch(() => '');
+    const tokenHint = res.status === 403 ? ' — token 不符（檢查 ~/.local/share/ego-linux/token；daemon 重啟後請重新啟動）' : '';
+    throw new Error(`tp-browser: /rpc HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}${tokenHint}; content-type: ${contentType || '(none)'}; body: ${bodySnippet(raw) || '(empty)'}`);
+  }
+
+  const raw = await res.text().catch(() => '');
+  let j;
+  try {
+    j = JSON.parse(raw);
+  } catch {
+    throw new Error(`tp-browser: /rpc returned invalid JSON (HTTP ${res.status}, content-type: ${contentType || '(none)'}): ${bodySnippet(raw) || '(empty)'}`);
+  }
   if (!j.ok) throw new Error(`${j.error?.name}: ${j.error?.message}`);
   return j.result;
 }

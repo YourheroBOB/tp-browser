@@ -268,14 +268,29 @@ function thrownStack(value) {
 
 async function runNodeJs(args) {
   let code = null;
-  if (args[0] === '-e') code = args[1];
-  else {
-    code = await new Promise((resolve) => {
+  if (args[0] === '-e') {
+    // `-e` 少了腳本字串時，舊寫法把 undefined 靜靜變成空腳本：先透過 ensureRunning() 去連
+    // 甚至啟動／重啟整個瀏覽器，再「成功」執行一支什麼都不做的腳本，使用者只看到 exit 0。
+    // 改成在連線／啟動任何東西之前就回報用法錯誤。
+    if (args.length < 2) {
+      console.error('tp-browser nodejs: -e requires a script string, e.g. -e "console.log(1)"');
+      console.error('tp-browser nodejs: or pipe the script via stdin / heredoc');
+      process.exit(2);
+    }
+    code = args[1];
+  } else {
+    code = await new Promise((resolve, reject) => {
       let buf = '';
       if (process.stdin.isTTY) { console.error('tp-browser nodejs: pass -e "code" or pipe a heredoc'); process.exit(2); }
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (d) => { buf += d; });
+      // 少了這行，stdin 讀取失敗（EPIPE／EIO／Windows 上已關閉的管線）不會觸發 'end'，
+      // 這個 Promise 永遠不 settle，CLI 就卡在事件迴圈裡永遠不結束。
+      process.stdin.on('error', reject);
       process.stdin.on('end', () => resolve(buf));
+    }).catch((e) => {
+      try { console.error(`tp-browser nodejs: failed to read the script from stdin: ${describeThrown(e)}`); } catch {}
+      process.exit(2);
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
@@ -296,11 +311,14 @@ async function runNodeJs(args) {
   }
   globalThis.Page = sdk.Page; globalThis.TaskSpace = sdk.TaskSpace;
 
-  const tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
-  const tmp = join(tmpDir, 'script.mjs');
-  writeFileSync(tmp, code, { mode: 0o600 });
+  // mkdtempSync／writeFileSync 一起放進 try：舊寫法若這裡失敗（磁碟滿、權限、暫存目錄不可寫），
+  // 例外會往外丟，finally 不會執行，0700 的暫存目錄就永遠留在 tmpdir 裡沒人清。
+  let tmpDir = null;
   let exitCode = 0;
   try {
+    tmpDir = mkdtempSync(join(tmpdir(), 'tp-run-'));
+    const tmp = join(tmpDir, 'script.mjs');
+    writeFileSync(tmp, code, { mode: 0o600 });
     await import(pathToFileURL(tmp).href);
   } catch (e) {
     // thrown 值不一定是 Error。整段回報再用一層 try 包住，
@@ -315,10 +333,16 @@ async function runNodeJs(args) {
       // 連 stderr 都寫不出去時，仍然要讓程序結束，不能卡在事件迴圈裡。
     }
   } finally {
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    if (tmpDir) {
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
   }
   // The SSE event stream keeps the event loop alive; a CLI must exit explicitly.
-  process.exit(exitCode);
+  // 使用者腳本可以用 `process.exitCode = N` 表示失敗（這是不截斷 stdout 的安全慣例）；
+  // 舊寫法 `process.exit(0)` 會把它蓋掉，自動化因此把失敗的腳本當成成功。
+  const scriptExit = Number(process.exitCode);
+  const finalCode = exitCode !== 0 ? exitCode : (Number.isInteger(scriptExit) ? scriptExit : 0);
+  process.exit(finalCode);
 }
 
 main().catch((e) => {

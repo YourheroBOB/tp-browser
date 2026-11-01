@@ -56,6 +56,46 @@ function toCookieParam(c) {
   return param;
 }
 
+// 頁面 storage 回寫（syncStorage）的邊界值。頁面端 inpage.agent.js 只限制了單一 value 的長度，
+// daemon 端原本完全沒有筆數／長度／origin 數量的上限，也沒有逐筆驗證：
+// 只要頁面送來一個不是 [k, v] 形式的條目，整個 for-of 解構就會丟 TypeError，
+// 被最外層的空 catch 吞掉 → 該次同步（連同同批合法條目）全部靜默遺失。
+// 另外 storageVault 會被序列化進每一個 https 頁面的 preload 腳本，
+// 無界成長會同時吃掉記憶體、磁碟與每次頁面載入的注入成本。
+const MAX_STORAGE_ORIGINS = 64;
+const MAX_STORAGE_ENTRIES_PER_ORIGIN = 500;
+const MAX_STORAGE_KEY_LENGTH = 1024;
+const MAX_STORAGE_VALUE_LENGTH = 65536;
+
+function normalizeStoragePair(pair) {
+  if (!Array.isArray(pair) || pair.length < 2) return null;
+  const [k, v] = pair;
+  if (typeof k !== 'string' || k.length === 0 || k.length > MAX_STORAGE_KEY_LENGTH) return null;
+  if (typeof v !== 'string' || v.length > MAX_STORAGE_VALUE_LENGTH) return null;
+  return [k, v];
+}
+
+function mergeStoragePairs(prev, incoming) {
+  const map = new Map();
+  for (const pair of Array.isArray(prev) ? prev : []) {
+    const entry = normalizeStoragePair(pair);
+    if (entry) map.set(entry[0], entry[1]);
+  }
+  for (const pair of Array.isArray(incoming) ? incoming : []) {
+    const entry = normalizeStoragePair(pair);
+    if (!entry) continue;
+    // 先刪再寫，讓剛更新的鍵移到最後（超額時優先淘汰較舊的鍵）
+    if (map.has(entry[0])) map.delete(entry[0]);
+    map.set(entry[0], entry[1]);
+  }
+  while (map.size > MAX_STORAGE_ENTRIES_PER_ORIGIN) {
+    const oldest = map.keys().next();
+    if (oldest.done) break;
+    map.delete(oldest.value);
+  }
+  return [...map.entries()];
+}
+
 export class EgoError extends Error {
   constructor(name, message) { super(message); this.name = name; }
 }
@@ -438,26 +478,26 @@ export class BrowserHub {
 
   _handleStorageSync(payload) {
     try {
-      const origin = String(payload?.origin || '');
-      if (!origin.startsWith('https://')) return;
-      const prev = this.storageVault[origin] || { ls: [], ss: [] };
-      const lsMap = new Map(Array.isArray(prev.ls) ? prev.ls : []);
-      const ssMap = new Map(Array.isArray(prev.ss) ? prev.ss : []);
-      if (Array.isArray(payload.ls)) {
-        for (const [k, v] of payload.ls) {
-          if (typeof k === 'string' && typeof v === 'string') lsMap.set(k, v);
-        }
-      }
-      if (Array.isArray(payload.ss)) {
-        for (const [k, v] of payload.ss) {
-          if (typeof k === 'string' && typeof v === 'string') ssMap.set(k, v);
-        }
-      }
+      let parsed = null;
+      try { parsed = new URL(String(payload?.origin || '')); } catch {}
+      if (!parsed || parsed.protocol !== 'https:') return;
+      // 用 URL.origin 正規化，確保與 _injectOriginStorageIfPresent 的 new URL(url).origin 對得上，
+      // 否則大小寫／結尾斜線不同的鍵會寫得進去卻永遠注入不到。
+      const origin = parsed.origin;
+      const prev = this.storageVault[origin];
       this.storageVault[origin] = {
         updatedAt: new Date().toISOString(),
-        ls: [...lsMap.entries()],
-        ss: [...ssMap.entries()],
+        ls: mergeStoragePairs(prev?.ls, payload?.ls),
+        ss: mergeStoragePairs(prev?.ss, payload?.ss),
       };
+      const origins = Object.keys(this.storageVault);
+      const excess = origins.length - MAX_STORAGE_ORIGINS;
+      if (excess > 0) {
+        const stale = origins
+          .filter((o) => o !== origin)
+          .sort((a, b) => String(this.storageVault[a]?.updatedAt || '').localeCompare(String(this.storageVault[b]?.updatedAt || '')));
+        for (const o of stale.slice(0, excess)) delete this.storageVault[o];
+      }
       this._persistStorageVault();
     } catch {}
   }

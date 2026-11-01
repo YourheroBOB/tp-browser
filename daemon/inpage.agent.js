@@ -174,6 +174,12 @@
       case 'ref': { const el = refIndex.get(spec.ref); els = el ? [el] : []; break; }
       case 'text': {
         const want = spec.exact ? spec.value : norm(spec.value).toLowerCase();
+        // An empty text filter makes String#includes('') true for every element, so
+        // `text=` (blank value / blank variable) or `text= >> nth=N` would "match" the
+        // whole page and let resolve() hand back a handle for an arbitrary element —
+        // the caller then clicks/fills something completely unrelated, silently.
+        // Treat it as an invalid selector instead of guessing (same contract as `css=`).
+        if (!norm(want)) return { els: [], spec, error: 'invalid selector' };
         const all = document.querySelectorAll('a, button, input, select, textarea, [role], h1,h2,h3,h4,h5,h6, p, li, td, th, label, span, div');
         for (const el of all) {
           if (!visibleInViewport(el)) continue;
@@ -197,6 +203,8 @@
         let list = [];
         try { list = Array.from(document.querySelectorAll(spec.css || '*')); } catch { return { els: [], spec, error: 'invalid selector' }; }
         const want = norm(spec.text);
+        // Same hazard as `text=`: an empty :has-text()/:text-is() filter matches everything.
+        if (!want) return { els: [], spec, error: 'invalid selector' };
         els = list.filter((el) => {
           if (!visibleInViewport(el)) return false;
           const t = spec.mode === 'text-is' ? norm(el.textContent) : norm(el.textContent).toLowerCase();

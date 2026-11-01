@@ -46,9 +46,31 @@ export class Cdp {
   connect(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.wsUrl);
-      const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error(`CDP connect timeout: ${this.wsUrl}`)); }, timeoutMs);
-      ws.onopen = () => { clearTimeout(timer); this.ws = ws; resolve(this); };
-      ws.onerror = () => { clearTimeout(timer); reject(new Error(`CDP connect failed: ${this.wsUrl}`)); };
+      // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。
+      // 舊版逾時回呼「先 ws.close() 才 reject」：關閉正在握手的 socket 會先觸發 onerror，
+      // 對外訊息因此變成誤導性的 "CDP connect failed"（真正原因是逾時）；更糟的是逾時之後
+      // 才完成的握手會把半死的 socket 掛回 this.ws，讓已失敗的 client 看似可用。
+      let settled = false;
+      let timer = null;
+      const settle = (ok, value) => {
+        if (settled) return false;
+        settled = true;
+        clearTimeout(timer);
+        if (ok) resolve(value);
+        else reject(value);
+        return true;
+      };
+      timer = setTimeout(() => {
+        if (!settle(false, new Error(`CDP connect timeout: ${this.wsUrl}`))) return;
+        try { ws.close(); } catch {}
+      }, timeoutMs);
+      ws.onopen = () => {
+        // 已由逾時（或更早的 error）定案：晚到的 open 直接關掉，不讓 client 變成半死可用。
+        if (settled) { try { ws.close(); } catch {} return; }
+        this.ws = ws;
+        settle(true, this);
+      };
+      ws.onerror = () => { settle(false, new Error(`CDP connect failed: ${this.wsUrl}`)); };
       ws.onclose = () => {
         this.closed = true;
         for (const [, p] of this.pending) {
@@ -114,10 +136,29 @@ export class Cdp {
 
 export const once = (cdp, method, { sessionId, timeout = 30000 } = {}) =>
   new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { off(); reject(new Error(`${method} event timed out after ${timeout}ms`)); }, timeout);
-    const off = cdp.onEvent((ev) => {
+    let offEvent = () => {};
+    let offClose = () => {};
+    let timer = null;
+    let settled = false;
+    const cleanup = () => {
+      settled = true;
+      clearTimeout(timer);
+      offEvent();
+      offClose();
+    };
+    const fail = (err) => { if (settled) return; cleanup(); reject(err); };
+    timer = setTimeout(() => fail(new Error(`${method} event timed out after ${timeout}ms`)), timeout);
+    offEvent = cdp.onEvent((ev) => {
+      if (settled) return;
       if (ev.method !== method) return;
       if (sessionId && ev.sessionId !== sessionId) return;
-      clearTimeout(timer); off(); resolve(ev.params);
+      cleanup();
+      resolve(ev.params);
     });
+    // 連線關閉後事件永遠不會再到；不在此一併拒絕的話，呼叫端只能一路等到 timeout
+    // （預設 30 秒），期間計時器與事件 handler 全部留著，CLI／daemon 因此卡住。
+    // 對只提供 onEvent 的極簡 emitter（測試用）維持舊行為。
+    if (typeof cdp.onClose === 'function') {
+      offClose = cdp.onClose(() => fail(new Error(`CDP connection closed while waiting for ${method}`)));
+    }
   });

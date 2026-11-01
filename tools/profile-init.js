@@ -22,11 +22,14 @@ if (prefs === null || typeof prefs !== 'object' || Array.isArray(prefs) ||
     Object.getPrototypeOf(prefs) !== Object.prototype) {
   prefs = {};
 }
-if (!prefs.bookmark_bar || typeof prefs.bookmark_bar !== 'object') prefs.bookmark_bar = {};
+// `bookmark_bar` / `session` / `profile` can be an array or a scalar after a partial or corrupt
+// write. A property hung on an array is dropped by JSON.stringify, which would silently lose
+// every setting assigned below, so normalize each subtree to a plain object first.
+prefs.bookmark_bar = isPlainObject(prefs.bookmark_bar) ? prefs.bookmark_bar : {};
 prefs.bookmark_bar.show_on_all_tabs = true;
-if (!prefs.session || typeof prefs.session !== 'object') prefs.session = {};
+prefs.session = isPlainObject(prefs.session) ? prefs.session : {};
 prefs.session.restore_on_startup = 1;
-if (!prefs.profile || typeof prefs.profile !== 'object') prefs.profile = {};
+prefs.profile = isPlainObject(prefs.profile) ? prefs.profile : {};
 if (!prefs.profile.name || prefs.profile.name === 'Person 1' || prefs.profile.name === '第一位使用者') {
   prefs.profile.name = '⚡ TooPower';
 }
@@ -208,22 +211,43 @@ if (bestCandidate) {
     if (!srcOsCrypt) {
       console.log('Skipped Cookies sync: source Local State has no usable os_crypt');
     } else {
-      // Stage the copy next to the destination, write os_crypt, then swap in the new DB so a
-      // failure at any step leaves the previous Cookies/Local State pair intact.
+      // Stage both files next to the destination, then swap them in an order that can be rolled
+      // back. Local State (the decryption key) is replaced first and restored from the snapshot
+      // below if the Cookies swap fails: otherwise a failed swap would leave the old, differently
+      // encrypted Cookies DB next to the new key, so every existing login would become
+      // undecryptable — strictly worse than not syncing at all.
       const tmpCookies = `${dstCookies}.fmb-sync-tmp`;
+      const tmpLocalState = `${dstLocalStatePath}.fmb-sync-tmp`;
+      let prevLocalState = null;
+      try { if (existsSync(dstLocalStatePath)) prevLocalState = readFileSync(dstLocalStatePath, 'utf8'); } catch { prevLocalState = null; }
       try {
         mkdirSync(dstCookiesDir, { recursive: true });
         copyFileSync(srcCookies, tmpCookies);
         const dstLs = readDestinationLocalState(dstLocalStatePath);
         dstLs.os_crypt = srcOsCrypt;
-        writeFileSync(dstLocalStatePath, JSON.stringify(dstLs), 'utf8');
+        writeFileSync(tmpLocalState, JSON.stringify(dstLs), 'utf8');
+        renameSync(tmpLocalState, dstLocalStatePath);
         for (const ext of ['-journal', '-wal', '-shm']) {
           try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
         }
-        renameSync(tmpCookies, dstCookies);
+        try {
+          renameSync(tmpCookies, dstCookies);
+        } catch (swapErr) {
+          // Cookies could not be replaced: put the previous key back so the pair stays intact.
+          try {
+            if (prevLocalState === null) {
+              if (existsSync(dstLocalStatePath)) unlinkSync(dstLocalStatePath);
+            } else {
+              writeFileSync(dstLocalStatePath, prevLocalState, 'utf8');
+            }
+          } catch {}
+          throw swapErr;
+        }
         console.log(`Synced Cookies (${Math.round(fileSize(srcCookies) / 1024)} KB) + Local State os_crypt from: ${srcCookies}`);
       } catch {
-        try { if (existsSync(tmpCookies)) unlinkSync(tmpCookies); } catch {}
+        for (const tmp of [tmpCookies, tmpLocalState]) {
+          try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+        }
       }
     }
   }

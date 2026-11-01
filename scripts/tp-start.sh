@@ -74,20 +74,7 @@ if [ "$RESTART" -eq 0 ]; then
   fi
 fi
 
-# Flush active cookies & storage and gracefully close Chrome via CDP before stopping
-curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
-sleep 1.0
-
-# Stop existing TP Browser processes for this profile/daemon
-pkill -f "ego-browserd.js" 2>/dev/null || true
-pkill -f "tp-browserd.js" 2>/dev/null || true
-pkill -f "$PROFILE_DIR" 2>/dev/null || true
-sleep 0.6
-rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket" 2>/dev/null || true
-PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
-[ -f "$PROFILE_INIT_JS" ] && node "$PROFILE_INIT_JS" 2>/dev/null || true
-
-# Discover Chromium/Chrome/Edge/Brave on macOS (Darwin) or Linux
+# Discover Chromium/Chrome/Edge/Brave before touching any existing processes.
 OS="$(uname -s)"
 BROWSER_BIN="${TP_BROWSER_BIN:-}"
 if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
@@ -111,6 +98,19 @@ if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
   echo "ERROR: No Chrome/Chromium/Edge/Brave binary found on $OS!" >&2
   exit 1
 fi
+
+# Only flush and stop the current instance after a browser executable is available.
+curl -fsS --max-time 3 "http://127.0.0.1:$DAEMON_PORT/flush-and-close" >/dev/null 2>&1 || true
+sleep 1.0
+
+# Stop existing TP Browser processes for this profile/daemon
+pkill -f "ego-browserd.js" 2>/dev/null || true
+pkill -f "tp-browserd.js" 2>/dev/null || true
+pkill -f "$PROFILE_DIR" 2>/dev/null || true
+sleep 0.6
+rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket" 2>/dev/null || true
+PROFILE_INIT_JS="$(dirname "$DAEMON_JS")/../tools/profile-init.js"
+[ -f "$PROFILE_INIT_JS" ] && node "$PROFILE_INIT_JS" 2>/dev/null || true
 
 # Helper to spawn a truly detached background process (setsid via Node.js)
 spawn_detached() {

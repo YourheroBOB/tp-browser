@@ -66,7 +66,9 @@ if [ "$RESTART" -eq 0 ]; then
       exit 0
     else
       # If already running in headed mode (no --headless in process args), preserve open window & tabs!
-      if ps ax -o command= 2>/dev/null | grep "$PROFILE_DIR" | grep -v grep | grep -qv -- "--headless"; then
+      # Only inspect the browser main process for this profile; helper processes
+      # such as crashpad do not indicate whether the browser has a visible window.
+      if ps ax -o command= 2>/dev/null | grep -F -- "--user-data-dir=$PROFILE_DIR" | grep -v grep | grep -v -- "--type=" | grep -qv -- "--headless"; then
         echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s), mode=headed)"
         exit 0
       fi

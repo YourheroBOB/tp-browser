@@ -3,6 +3,37 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+// 純物件判斷：null、陣列、純量（字串／數字／布林／undefined）都不是合法容器。
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// 舊版、手動編輯或半寫入的 ledger 可能整段缺少 `spaces`／`labelSeq`，或把它們寫成
+// null／陣列／純量；個別 space 的 `pages` 也一樣可能缺漏或不是物件。若不修正：
+//   - `list()`／`get()` 在 `Object.values(undefined)`／`Object.hasOwn(undefined, …)` 處
+//     拋 TypeError，daemon 起不來；
+//   - `create()` 在 `this.data.spaces[id] = …`（Cannot set properties of undefined）拋錯，
+//     此時 nextSpaceId 已遞增、labelSeq 也已動過，記憶體是半套狀態卻沒有 persist；
+//   - `nextLabel()` 在 `Object.hasOwn(undefined, spaceId)` 處拋錯；
+//   - `setPage`／`removePage`／`bindPage`／`addPage` 對 pages 為 null 的空間拋 TypeError。
+// 因此在載入後把容器正規化成純物件；非物件（null／陣列／純量）的 space 項目一律丟棄
+// （留著只會讓 list() 吐出垃圾、讓 reaper 與 daemon 讀 pages／createdAt 時才炸），
+// 每個 space 的 pages 也正規化成純物件。只動記憶體狀態，不順手寫回磁碟。
+// 註：同樣刻意不新增 Store 的 prototype 方法，維持 Store.prototype 的公開介面契約。
+function normalizeLedgerShape(data) {
+  if (!isPlainObject(data)) return;
+  if (!isPlainObject(data.spaces)) data.spaces = {};
+  if (!isPlainObject(data.labelSeq)) data.labelSeq = {};
+  for (const key of Object.keys(data.spaces)) {
+    const space = data.spaces[key];
+    if (!isPlainObject(space)) {
+      delete data.spaces[key];
+      continue;
+    }
+    if (!isPlainObject(space.pages)) space.pages = {};
+  }
+}
+
 // 舊版、手動編輯或半寫入的 ledger 可能沒有 nextSpaceId，或它的值落後於既有 space id。
 // 若不修正就進 create()：`undefined++`／`'x'++` 會算出 NaN 並把新空間寫進 "NaN" 鍵；
 // `nextSpaceId` 落後時則會直接覆蓋既有空間（id 重用）。因此在載入後把
@@ -50,6 +81,8 @@ export class Store {
         throw new Error(`ledger root is not an object (got ${Array.isArray(parsed) ? 'array' : typeof parsed})`);
       }
       this.data = parsed;
+      // 先把缺漏／壞形狀的容器補成純物件，再算 nextSpaceId（後者要讀 spaces 的既有 id）。
+      normalizeLedgerShape(this.data);
       normalizeNextSpaceId(this.data);
     } catch (e) { console.error('[ego-browserd] store load failed, starting fresh:', e.message); }
   }

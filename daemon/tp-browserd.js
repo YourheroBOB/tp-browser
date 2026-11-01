@@ -347,7 +347,9 @@ async function dispatch(method, p) {
     }
     case 'space.handOff': {
       const sp = store.get(p.id);
-      if (sp) { sp.state = 'handed-off'; store.persist(); }
+      if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.id}`);
+      sp.state = 'handed-off';
+      store.persist();
       return { handedOff: true };
     }
     case 'space.waitForControl': return { control: true };

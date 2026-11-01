@@ -1,6 +1,6 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // 舊版、手動編輯或半寫入的 ledger 可能沒有 nextSpaceId，或它的值落後於既有 space id。
@@ -51,7 +51,22 @@ export class Store {
       }
       this.data = parsed;
       normalizeNextSpaceId(this.data);
-    } catch (e) { console.error('[ego-browserd] store load failed, starting fresh:', e.message); }
+    } catch (e) {
+      // 降級成空 ledger 之前，先把無法解析或根節點不合法的原檔原樣複製成
+      // `${file}.corrupt-<timestamp>`：否則下一個 persist() 會把原檔直接覆寫成空 ledger，
+      // 原本還能手動救回的 space／page／targetId 就永久消失，且不留任何痕跡。
+      // 刻意用「複製」而不是「改名」：原檔留在原路徑供 persist 覆寫，位元組完全相同的備份
+      // 則留給人工修復。副檔名不使用 `.tmp` 結尾，才不會與 persist() 的
+      // `${file}.${pid}.tmp` 暫存檔清理規則互相干擾。
+      // 備份本身失敗（檔案已消失、權限不足、型別不是普通檔案等）不該讓 daemon 起不來：
+      // 安靜放棄、照舊降級。
+      try {
+        if (existsSync(this.file) && statSync(this.file).isFile()) {
+          copyFileSync(this.file, `${this.file}.corrupt-${Date.now()}`);
+        }
+      } catch { /* 備份失敗不阻擋降級為空 ledger */ }
+      console.error('[ego-browserd] store load failed, starting fresh:', e.message);
+    }
   }
   persist() {
     mkdirSync(dirname(this.file), { recursive: true });

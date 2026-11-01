@@ -78,24 +78,34 @@ function readToken() {
   if (!existsSync(TOKEN_FILE)) throw new Error(`no token at ${TOKEN_FILE}; is tp-browserd running?`);
   return readFileSync(TOKEN_FILE, 'utf8').trim();
 }
+// daemon.json 由啟動器寫下「這台機器實際使用的埠號」。合法埠的唯一定義：
+// 1–65535 的整數。除此之外（字串、null、0、負數、小數、超界）一律視為沒寫。
+function isPortNumber(value) {
+  return Number.isInteger(value) && value > 0 && value <= 65535;
+}
 function readPort() {
   // 允許以 TP_DAEMON_PORT 明確指定 daemon 埠：未設定時行為與以往完全相同（9774 或 9772）。
   // 這讓測試能把假 daemon 綁在 OS 指派的臨時埠上，不必和真的 daemon 搶 9772／9774。
   const envPort = Number(process.env.TP_DAEMON_PORT);
-  if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) return envPort;
+  if (isPortNumber(envPort)) return envPort;
   if (existsSync(DAEMON_JSON)) {
+    // 舊寫法只認 9774，其餘一律回落 9772：一旦埠號來自 --alt-port、WSL2 雙軌或部署自訂值
+    // （例如 Windows 節點的 18802），status 就會對著錯的埠喊 not reachable 並以 exit 2 結束。
+    // 讀到合法的整數埠就直接採用，對既有 9772／9774 兩種情況結果完全相同。
     try {
       const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port;
-      if (p === 9774) return 9774;
+      if (isPortNumber(p)) return p;
     } catch {}
   }
   return 9772;
 }
 function readChromePort() {
   if (existsSync(DAEMON_JSON)) {
+    // 同 readPort：只認 9775 會讓 doctor 在換埠後去探 9773（錯的埠）並印出誤導的修復指令。
+    // 讀到合法的整數埠就直接採用，對既有 9773／9775 兩種情況結果完全相同。
     try {
       const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).chromePort;
-      if (p === 9775) return 9775;
+      if (isPortNumber(p)) return p;
     } catch {}
   }
   return 9773;
@@ -106,7 +116,9 @@ function daemonBase(port) {
   return `http://127.0.0.1:${port}`;
 }
 function chromeVersionUrl(chromePort) {
-  return chromePort === 9775 ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
+  // 舊寫法把 9775 以外的埠一律導回 9773，doctor 因此永遠探錯埠。
+  // 直接使用傳入的埠，對既有 9773／9775 兩種情況結果完全相同。
+  return `http://127.0.0.1:${chromePort}/json/version`;
 }
 
 async function health(port) {

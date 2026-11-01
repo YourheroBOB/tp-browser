@@ -250,6 +250,13 @@ const server = createServer(async (req, res) => {
     res.writeHead(403).end('forbidden host/origin');
     return;
   }
+  if (url.pathname === '/flush-and-close' && req.method === 'GET') {
+    if (hub) {
+      try { Promise.resolve(hub.cdp.send('Browser.close')).catch(() => {}); } catch {}
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
+    return;
+  }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }
   if (url.pathname === '/events') {
     if (!checkToken(req)) { res.writeHead(403).end('bad token'); return; }
@@ -270,6 +277,10 @@ const server = createServer(async (req, res) => {
     }
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid JSON' } })); return; }
+    if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'body must be a JSON object' } }));
+      return;
+    }
     try {
       const result = await dispatch(msg.method, msg.params || {});
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: msg.id ?? null, ok: true, result }));

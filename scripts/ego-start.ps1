@@ -141,6 +141,32 @@ if (-not $Restart) {
 foreach ($FlushPort in @(9772, 9774)) {
     try { Invoke-RestMethod -Uri "http://127.0.0.1:$FlushPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
 }
+# A deployment may also override the daemon port in $DataDir\daemon.json (the Windows nodes
+# run 18802/18800). If that daemon is the one holding the user's login state, flushing only
+# 9772/9774 leaves its Chrome to be hard-killed by the Stop-Process -Force sweep below before
+# cookies / storage are written out. Resolve the configured port defensively: a missing or
+# corrupt daemon.json, a non-numeric value, null, 0 or an out-of-range port is skipped, and a
+# port already covered by the fixed list above is not flushed twice. All of this still runs
+# BEFORE the first Stop-Process.
+$ConfigFlushPort = $null
+try {
+    $DaemonJsonPath = Join-Path $DataDir "daemon.json"
+    if (Test-Path -LiteralPath $DaemonJsonPath) {
+        $DaemonCfg = Get-Content -Raw -LiteralPath $DaemonJsonPath | ConvertFrom-Json
+        if ($DaemonCfg -and ($DaemonCfg.PSObject.Properties.Name -contains 'port')) {
+            $CfgPort = $DaemonCfg.port
+            if ($CfgPort -is [int] -or $CfgPort -is [long] -or $CfgPort -is [double] -or $CfgPort -is [decimal]) {
+                $CfgPortNum = [double]$CfgPort
+                if ($CfgPortNum -ge 1 -and $CfgPortNum -le 65535 -and $CfgPortNum -eq [math]::Floor($CfgPortNum)) {
+                    $ConfigFlushPort = [int]$CfgPortNum
+                }
+            }
+        }
+    }
+} catch {}
+if ($null -ne $ConfigFlushPort -and @(9772, 9774) -notcontains $ConfigFlushPort) {
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$ConfigFlushPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+}
 Start-Sleep -Milliseconds 1000
 
 Get-CimInstance Win32_Process | Where-Object {

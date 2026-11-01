@@ -68,10 +68,17 @@ export class Cdp {
         // 已由逾時（或更早的 error）定案：晚到的 open 直接關掉，不讓 client 變成半死可用。
         if (settled) { try { ws.close(); } catch {} return; }
         this.ws = ws;
+        // 同一個實例重新 connect() 後必須恢復可用：上一次連線（失敗或已關閉）留下的
+        // this.closed 要在這裡重設，否則 send() 的 this.closed 閘門會永遠拒絕這條新連線。
+        this.closed = false;
         settle(true, this);
       };
       ws.onerror = () => { settle(false, new Error(`CDP connect failed: ${this.wsUrl}`)); };
       ws.onclose = () => {
+        // 只有這個 socket 仍是目前的 this.ws 時，關閉才算數。重新 connect() 之後舊 socket
+        // 才慢悠悠送達 onclose 是常見競態：不理會它會把新連線的 closed 設回 true、拒絕
+        // 新連線所有 pending 的 send，並誤觸 close handlers。
+        if (ws !== this.ws) return;
         this.closed = true;
         for (const [, p] of this.pending) {
           // 連線已死，回應永遠不會到；不清計時器的話每個未完成的 send 都會把
@@ -89,7 +96,12 @@ export class Cdp {
           try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
         }
       };
-      ws.onmessage = (ev) => this._recv(ev.data);
+      ws.onmessage = (ev) => {
+        // 同上：舊 socket 遲到的訊息不得進入 _recv——它的 id 屬於舊連線，會配對到新連線的
+        // pending、污染事件派送與 session 記錄。
+        if (ws !== this.ws) return;
+        this._recv(ev.data);
+      };
     });
   }
 

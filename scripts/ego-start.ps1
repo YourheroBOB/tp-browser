@@ -110,9 +110,20 @@ if (-not $Restart) {
         $h = Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/health" -TimeoutSec 2
         $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 2
         if ($h.ok -and $h.chrome -and $cv.'User-Agent' -match 'Windows') {
-            if (-not $Headed -and -not $Edge -and -not $Chrome) {
-                Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
-                exit 0
+            if (-not $Headed) {
+                $HealthyProc = @(Get-CimInstance Win32_Process | Where-Object {
+                    ($_.Name -ieq $TargetExeName) -and
+                    ($_.CommandLine -like "*ego-linux*profile-agent*") -and
+                    ($_.CommandLine -notlike "*--type=*")
+                })
+                if ($HealthyProc.Count -gt 0) {
+                    if ($Edge -or $Chrome) {
+                        Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser), exe=$TargetExeName, pid=$($HealthyProc[0].ProcessId), session=$($HealthyProc[0].SessionId), mode=headless, reused=true)"
+                    } else {
+                        Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
+                    }
+                    exit 0
+                }
             } elseif ($Headed) {
                 $HeadedProc = @(Get-CimInstance Win32_Process | Where-Object {
                     ($_.Name -ieq $TargetExeName) -and
@@ -196,7 +207,13 @@ if (-not (Test-Path $ProfileInitJs)) {
     $ProfileInitJs = Join-Path (Split-Path $PSScriptRoot -Parent) "tools\profile-init.js"
 }
 if (Test-Path $ProfileInitJs) {
-    & $NodeBin $ProfileInitJs 2>$null | Out-Null
+    $PrevDataDir = $env:EGO_LINUX_DATA_DIR
+    $env:EGO_LINUX_DATA_DIR = $DataDir
+    try {
+        & $NodeBin $ProfileInitJs 2>$null | Out-Null
+    } finally {
+        $env:EGO_LINUX_DATA_DIR = $PrevDataDir
+    }
 }
 
 # 6. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens

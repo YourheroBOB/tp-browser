@@ -280,6 +280,10 @@ async function runNodeJs(args) {
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (d) => { buf += d; });
       process.stdin.on('end', () => resolve(buf));
+      process.stdin.once('error', (e) => {
+        console.error(`tp-browser nodejs: failed to read stdin: ${e.message}`);
+        process.exit(2);
+      });
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');

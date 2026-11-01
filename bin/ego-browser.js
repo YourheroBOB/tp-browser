@@ -79,6 +79,10 @@ function readToken() {
   return readFileSync(TOKEN_FILE, 'utf8').trim();
 }
 function readPort() {
+  // 允許以 TP_DAEMON_PORT 明確指定 daemon 埠：未設定時行為與以往完全相同（9774 或 9772）。
+  // 這讓測試能把假 daemon 綁在 OS 指派的臨時埠上，不必和真的 daemon 搶 9772／9774。
+  const envPort = Number(process.env.TP_DAEMON_PORT);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) return envPort;
   if (existsSync(DAEMON_JSON)) {
     try {
       const p = JSON.parse(readFileSync(DAEMON_JSON, 'utf8')).port;
@@ -97,7 +101,9 @@ function readChromePort() {
   return 9773;
 }
 function daemonBase(port) {
-  return port === 9774 ? 'http://127.0.0.1:9774' : 'http://127.0.0.1:9772';
+  // 舊寫法只認 9774，其餘一律導回 9772；一旦埠號來自 TP_DAEMON_PORT 就會打錯位址。
+  // 直接採用傳入的埠，對既有 9772／9774 兩種情況結果完全相同。
+  return `http://127.0.0.1:${port}`;
 }
 function chromeVersionUrl(chromePort) {
   return chromePort === 9775 ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';
@@ -205,6 +211,61 @@ async function doctor() {
   if (h && !h.chrome) console.log('  daemon is up but Chromium not attached; it retries every 3s once chrome answers.');
 }
 
+// ── thrown 值安全格式化 ──────────────────────────────────────────────
+// 使用者腳本可以 throw 任何東西（null、undefined、字串、物件），不一定是 Error。
+// 舊寫法直接讀 `e.name` / `e.message`：
+//   * `throw null` / `throw undefined` → catch 區塊自己再丟 TypeError，
+//     process.exit() 永遠到不了；只要腳本留下計時器或 SDK 已開 SSE 串流，CLI 就卡住不結束。
+//   * `throw 'boom'` → 只印出「Error: undefined」，真正的原因不見了。
+// 下面幾個函式保證「格式化本身不會拋錯」，catch 區塊因此一定能走到 process.exit(1)。
+function describeThrown(value) {
+  try {
+    if (value instanceof Error) {
+      const name = typeof value.name === 'string' && value.name.trim() ? value.name : 'Error';
+      let message = '';
+      try {
+        message = typeof value.message === 'string' ? value.message : String(value.message ?? '');
+      } catch { message = ''; }
+      return message ? `${name}: ${message}` : name;
+    }
+    if (value === null) return 'Error: null';
+    if (value === undefined) return 'Error: undefined';
+    if (typeof value === 'string') return value.trim() ? `Error: ${value}` : 'Error: (empty string was thrown)';
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || typeof value === 'symbol') {
+      return `Error: ${String(value)}`;
+    }
+    return `Error: ${describeThrownObject(value)}`;
+  } catch {
+    return 'Error: (unprintable thrown value)';
+  }
+}
+
+function describeThrownObject(value) {
+  try {
+    const json = JSON.stringify(value);
+    if (typeof json === 'string' && json.length > 0) {
+      return json.length > 2000 ? `${json.slice(0, 2000)}…` : json;
+    }
+  } catch {}
+  try {
+    const text = String(value);
+    if (text && text !== '[object Object]') return text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
+  } catch {}
+  try { return Object.prototype.toString.call(value); } catch {}
+  return '(unserializable object)';
+}
+
+function thrownStack(value) {
+  try {
+    if (value === null || typeof value !== 'object') return '';
+    const stack = value.stack;
+    if (typeof stack !== 'string' || stack === '') return '';
+    return stack.split('\n').slice(1, 4).join('\n');
+  } catch {
+    return '';
+  }
+}
+
 async function runNodeJs(args) {
   let code = null;
   if (args[0] === '-e') code = args[1];
@@ -242,11 +303,17 @@ async function runNodeJs(args) {
   try {
     await import(pathToFileURL(tmp).href);
   } catch (e) {
+    // thrown 值不一定是 Error。整段回報再用一層 try 包住，
+    // 任何意外都不能阻止下面的 process.exit(1)。
     exitCode = 1;
-    console.error(`${e.name || 'Error'}: ${e.message}`);
-    const stack = String(e.stack || '').split('\n').slice(1, 4).join('\n');
-    if (stack) console.error(stack);
-    console.error(`tp-browser's nodejs process exited with code 1.`);
+    try {
+      console.error(describeThrown(e));
+      const stack = thrownStack(e);
+      if (stack) console.error(stack);
+      console.error(`tp-browser's nodejs process exited with code 1.`);
+    } catch {
+      // 連 stderr 都寫不出去時，仍然要讓程序結束，不能卡在事件迴圈裡。
+    }
   } finally {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
@@ -254,4 +321,9 @@ async function runNodeJs(args) {
   process.exit(exitCode);
 }
 
-main().catch((e) => { console.error(`${e.name || 'Error'}: ${e.message}`); process.exitCode = 1; });
+main().catch((e) => {
+  // 這裡同樣可能收到非 Error 值；而且 SSE 串流可能已經開啟，事件迴圈不會自己排空，
+  // 所以一定要顯式 process.exit(1)，不能只設 process.exitCode。
+  try { console.error(describeThrown(e)); } catch {}
+  process.exit(1);
+});

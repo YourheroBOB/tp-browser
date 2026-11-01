@@ -27,6 +27,26 @@ function resolveScript(unixName, winName) {
   return candidates.find((p) => existsSync(p)) || candidates[0];
 }
 
+// 啟動器結果 → CLI exit code：只有「真的正常結束」才採用它的退出碼。
+// spawnSync 在被 signal 終止時 status === null 且 signal 有值；spawn 失敗（例如 ENOENT）
+// 時 status 也是 null 但 error 有值。舊寫法 `r.status ?? 0` 會把這兩種失敗都當成成功，
+// 讓 `tp-browser stop` / `start` 回 0，自動化流程因此誤判「已停止／已啟動」。
+function launcherExitCode(r, label) {
+  if (r.error) {
+    console.error(`tp-browser: failed to run launcher ${label}: ${r.error.message}`);
+    return 1;
+  }
+  if (r.signal) {
+    console.error(`tp-browser: launcher ${label} was terminated by signal ${r.signal}`);
+    return 1;
+  }
+  if (r.status === null || r.status === undefined) {
+    console.error(`tp-browser: launcher ${label} ended without an exit status`);
+    return 1;
+  }
+  return r.status;
+}
+
 function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
   const stdio = quietStdout ? ['ignore', process.stderr, process.stderr] : 'inherit';
   if (process.platform === 'win32') {
@@ -42,7 +62,7 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
       else if (a === '--chrome' || a === '-Chrome' || a === 'chrome') psArgs.push('-Chrome');
     }
     const r = spawnSync('powershell.exe', psArgs, { stdio });
-    return r.status ?? 0;
+    return launcherExitCode(r, script);
   } else {
     const script = resolveScript(mode === 'stop' ? 'tp-stop.sh' : 'tp-start.sh', 'ego-start.ps1');
     const shArgs = [script];
@@ -50,7 +70,7 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
     if (mode === 'restart') shArgs.push('--restart');
     shArgs.push(...extraArgs);
     const r = spawnSync('/bin/sh', shArgs, { stdio });
-    return r.status ?? 0;
+    return launcherExitCode(r, script);
   }
 }
 

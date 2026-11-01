@@ -222,7 +222,25 @@
       }
       case 'xpath': {
         const xr = document.evaluate(spec.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        for (let i = 0; i < xr.snapshotLength; i++) els.push(xr.snapshotItem(i));
+        // XPath can snapshot attribute (nodeType 2), text (3) or comment (8) nodes.
+        // Those have no getBoundingClientRect, so resolve() -> visibleInViewport() used
+        // to throw TypeError and the daemon only ever saw a bare exception. Keep element
+        // nodes only: an attribute maps to its ownerElement, a text node to its
+        // parentElement, and the mapped elements are de-duplicated (several text nodes
+        // inside one <p> count as that single <p>). If nothing maps to an element the
+        // selector simply resolves to an empty result.
+        const seen = new Set();
+        for (let i = 0; i < xr.snapshotLength; i++) {
+          const node = xr.snapshotItem(i);
+          if (!node) continue;
+          let el = null;
+          if (node.nodeType === 1) el = node;
+          else if (node.nodeType === 2) el = node.ownerElement || null;
+          else if (node.nodeType === 3) el = node.parentElement || null;
+          if (!el || el.nodeType !== 1 || seen.has(el)) continue;
+          seen.add(el);
+          els.push(el);
+        }
         break;
       }
       default: return { els: [], spec, error: 'invalid selector' };
@@ -385,7 +403,16 @@
       let o = null;
       if (typeof pick === 'number') o = opts[pick] || null;
       else if (pick && typeof pick === 'object') {
-        o = opts.find((x) => (pick.value !== undefined && x.value === pick.value) || (pick.label !== undefined && norm(x.textContent) === norm(pick.label))) || null;
+        // Playwright's selectOption accepts { index } / { value } / { label }. Without
+        // the index branch, selectOptions(hid, { index: 1 }) reported "no option
+        // matches ..." even though the second option existed. An out-of-range or
+        // non-integer index is just "no match", so the existing all-or-nothing rule
+        // fails the whole call and leaves the current selection untouched.
+        if (pick.index !== undefined && pick.index !== null) {
+          o = Number.isInteger(pick.index) && pick.index >= 0 ? (opts[pick.index] || null) : null;
+        } else {
+          o = opts.find((x) => (pick.value !== undefined && x.value === pick.value) || (pick.label !== undefined && norm(x.textContent) === norm(pick.label))) || null;
+        }
       } else {
         o = opts.find((x) => x.value === pick) || opts.find((x) => norm(x.textContent) === norm(pick)) || null;
       }

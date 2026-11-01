@@ -42,9 +42,13 @@ export class Store {
   nextLabel(spaceId) {
     const s = this.get(spaceId);
     if (!s) return 'p?';
-    this.data.labelSeq[spaceId] = (this.data.labelSeq[spaceId] ?? 1) + 1;
+    let seq = this.data.labelSeq[spaceId] ?? 1;
+    do {
+      seq += 1;
+    } while (Object.hasOwn(s.pages, `p${seq}`));
+    this.data.labelSeq[spaceId] = seq;
     this.persist();
-    return `p${this.data.labelSeq[spaceId]}`;
+    return `p${seq}`;
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);
@@ -70,5 +74,9 @@ export class Store {
     delete s.pages[label];
     this.persist();
   }
-  deleteSpace(id) { delete this.data.spaces[id]; this.persist(); }
+  deleteSpace(id) {
+    delete this.data.spaces[id];
+    delete this.data.labelSeq[id];
+    this.persist();
+  }
 }

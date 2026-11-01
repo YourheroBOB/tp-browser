@@ -37,13 +37,29 @@ $ChromePort = if ($UseAlt) { 9775 } else { 9773 }
 #    TP_BROWSER_BIN must exist, and -Edge / -Chrome restrict the search to that
 #    browser's own path list. All of these checks run BEFORE any flush-and-close
 #    or Stop-Process below, so a wrong browser never touches a live profile.
-function Test-BrowserBinPath([string]$Path) {
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+#    A folder (e.g. ...\Chrome\Application) or a non-.exe file also passes a bare
+#    Test-Path, and launching it opens Explorer / fails Win32_Process Create only
+#    after the running daemon and browser were already killed.
+function Get-BrowserBinProblem([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "is empty" }
     try {
-        return [bool](Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)
+        if (Test-Path -LiteralPath $Path -PathType Container -ErrorAction SilentlyContinue) {
+            return "is a directory, not a browser executable"
+        }
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+            return "does not exist"
+        }
     } catch {
-        return $false
+        return "does not exist"
     }
+    if ([System.IO.Path]::GetExtension($Path) -ine ".exe") {
+        return "is not an .exe file"
+    }
+    return $null
+}
+
+function Test-BrowserBinPath([string]$Path) {
+    return ($null -eq (Get-BrowserBinProblem -Path $Path))
 }
 
 $ChromePaths = @(
@@ -63,7 +79,8 @@ $BravePaths = @(
 $BrowserBin = $env:TP_BROWSER_BIN
 if (-not ([string]::IsNullOrWhiteSpace($BrowserBin))) {
     if (-not (Test-BrowserBinPath -Path $BrowserBin)) {
-        [Console]::Error.WriteLine("ERROR: TP_BROWSER_BIN is set to '$BrowserBin' but that path does not exist. No Chrome or Edge binary is available at TP_BROWSER_BIN; refusing to fall back to a different browser.")
+        $BinProblem = Get-BrowserBinProblem -Path $BrowserBin
+        [Console]::Error.WriteLine("ERROR: TP_BROWSER_BIN is set to '$BrowserBin' but that path $BinProblem. No Chrome or Edge binary is available at TP_BROWSER_BIN; refusing to fall back to a different browser.")
         exit 1
     }
 } elseif ($Edge -and $Chrome) {
@@ -79,7 +96,7 @@ if (-not ([string]::IsNullOrWhiteSpace($BrowserBin))) {
         }
     }
     if (-not (Test-BrowserBinPath -Path $BrowserBin)) {
-        [Console]::Error.WriteLine("ERROR: -$ExplicitBrowser was requested but no $ExplicitBrowser binary was found in its known install paths; refusing to fall back to a different browser.")
+        [Console]::Error.WriteLine("ERROR: -$ExplicitBrowser was requested but no $ExplicitBrowser .exe binary was found in its known install paths (directories and non-.exe files are rejected); refusing to fall back to a different browser.")
         exit 1
     }
 } else {

@@ -92,12 +92,15 @@ export class Store {
     const s = this.get(spaceId);
     if (!s) return 'p?';
     // labelSeq 也只認自有鍵：繼承鍵（例如 'toString'）會讀到函式並寫出一筆孤兒序號，
-    // 讓 ledger 只增不減。
-    const seq = this.data.labelSeq;
-    const current = Object.hasOwn(seq, spaceId) ? seq[spaceId] : undefined;
-    seq[spaceId] = (current ?? 1) + 1;
+    // 讓 ledger 只增不減。另跳過已被占用的 label，避免覆蓋既有分頁。
+    const labelSeq = this.data.labelSeq;
+    let seq = Object.hasOwn(labelSeq, spaceId) ? labelSeq[spaceId] : 1;
+    do {
+      seq += 1;
+    } while (Object.hasOwn(s.pages, `p${seq}`));
+    labelSeq[spaceId] = seq;
     this.persist();
-    return `p${seq[spaceId]}`;
+    return `p${seq}`;
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);

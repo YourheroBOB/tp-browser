@@ -22,8 +22,13 @@ Get-CimInstance Win32_Process | Where-Object {
     ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
     ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
 } | ForEach-Object {
-    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    $Stopped++
+    # 只有 Stop-Process 真的成功才計入 terminated。-ErrorAction SilentlyContinue 會把
+    # 「權限不足」這類錯誤吞掉，因此再用 $? 與 try/catch 確認一次；失敗一律不遞增。
+    try {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        if ($?) { $Stopped++ }
+    } catch {
+    }
 }
 
 $Remaining = @()
@@ -40,7 +45,9 @@ for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
 }
 
 if ($Remaining.Count -gt 0) {
-    Write-Output "EGO_STOP_FAILED (terminated $Stopped processes, $($Remaining.Count) still running)"
+    $RemainingPids = (($Remaining | ForEach-Object { $_.ProcessId }) -join ",")
+    Write-Output "EGO_STOP_FAILED (terminated $Stopped processes, still running: $RemainingPids)"
     exit 1
 }
 Write-Output "EGO_STOPPED (terminated $Stopped processes)"
+exit 0

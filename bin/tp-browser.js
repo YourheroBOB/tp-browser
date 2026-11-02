@@ -398,7 +398,17 @@ async function runNodeJs(args) {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
   // The SSE event stream keeps the event loop alive; a CLI must exit explicitly.
-  process.exit(exitCode);
+  // 腳本用 process.exitCode 表示失敗（不截斷 stdout）。這裡若固定傳入區域變數
+  // exitCode（沒丟例外時是 0），Node 會蓋掉腳本設定的退出碼，自動化會把失敗當成成功。
+  process.exit(cliExitCode(exitCode, process.exitCode));
+}
+
+// 沒丟例外時採用腳本的 process.exitCode（整數，含 0）；非整數或未設定則為 0。
+// 例外路徑（runExitCode !== 0）優先，避免失敗被腳本留下的 0 蓋掉。
+export function cliExitCode(runExitCode, scriptExitCode) {
+  if (runExitCode !== 0) return runExitCode;
+  const scriptExit = Number(scriptExitCode);
+  return Number.isInteger(scriptExit) ? scriptExit : 0;
 }
 
 // 只有「被當成 CLI 直接執行」時才跑 main()；本檔被 import（例如測試）時不得有副作用，

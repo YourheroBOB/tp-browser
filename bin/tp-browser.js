@@ -213,7 +213,16 @@ async function doctor() {
     console.log(`  fix: tp-start   # or: node "${daemonPath()}"`);
   }
   let chromeOk = false;
-  try { const r = await fetch(chromeVersionUrl(chromePort), { signal: AbortSignal.timeout(2500) }); const v = await r.json(); chromeOk = true; console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`); } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
+  try {
+    const r = await fetch(chromeVersionUrl(chromePort), { signal: AbortSignal.timeout(2500) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const v = await r.json();
+    if (!v || typeof v.Browser !== 'string' || v.Browser.trim() === '') {
+      throw new Error('not a Chrome /json/version response');
+    }
+    chromeOk = true;
+    console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`);
+  } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
   if (!chromeOk) {
     if (isWin || isMac) {
       console.log(`  fix (${isWin ? 'Windows' : 'macOS'} headless or headed agent profile):`);

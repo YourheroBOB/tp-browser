@@ -896,7 +896,10 @@ export class BrowserHub {
         try { rs = await this.evalIn(targetId, 'document.readyState', { timeout: 1500 }); } catch {}
         if (rs === 'complete') {
           try { cur = await this.evalIn(targetId, 'location.href', { timeout: 1500 }); } catch {}
-          if (cur === targetUrl || (cur && targetUrl.startsWith(cur.replace(/\/$/, '')))) done = true;
+          // 只接受與本次導航結果相同的文件（結尾斜線不算不同頁）。
+          // 目的網址「以前綴包含」目前網址時，人還停在父路徑，不能當成已載入。
+          const sameDoc = cur && String(cur).replace(/\/+$/, '') === String(targetUrl).replace(/\/+$/, '');
+          if (sameDoc) done = true;
         }
       }
       if (!done) throw new EgoError('NavigationError', `page.goto: timeout ${timeout}ms exceeded waiting for ${waitUntil} at ${url}`);

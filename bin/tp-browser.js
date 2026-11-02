@@ -287,6 +287,16 @@ async function runNodeJs(args) {
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
+  // 沒有腳本時必須在產生任何副作用之前就結束。
+  // 舊行為：`tp-browser nodejs -e`（漏給 code）會走 `code = args[1]`（undefined），
+  // `tp-browser nodejs < /dev/null`（空 heredoc）則讀到空字串；兩者都被 `String(code || '')`
+  // 變成空字串，於是先 `ensureRunning()` 把 daemon／Chrome 拉起來，再匯入一個空檔案，
+  // 最後回報 exit 0。呼叫端因此誤判「任務已執行完畢」，還附帶一次無謂的瀏覽器啟動。
+  // BOM 與純空白都視為沒有腳本（空腳本沒有任何可觀察效果，報錯比靜默成功安全）。
+  if (code.trim() === '') {
+    console.error('tp-browser nodejs: no script provided — pass -e "code" or pipe a heredoc via stdin');
+    process.exit(2);
+  }
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {

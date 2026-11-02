@@ -6,7 +6,7 @@
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync, writeSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +42,44 @@ function safePath(p, { mustExist = false } = {}) {
 // Data root is a fixed constant (symlink the directory to relocate it).
 // Nothing environment-derived ever reaches a filesystem write or a fetch URL.
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
-const ALT_PORT = process.argv.includes('--alt-port') || process.env.EGO_BROWSERD_PORT === '9774';
+// CLI arguments used to be probed with a single `process.argv.includes('--alt-port')`,
+// so every other argument was silently dropped: `ego-browserd --help` started a full
+// daemon on the *default* port 9772 (the caller then talked to the wrong daemon, or to
+// none at all) instead of printing usage. `--help` / `-h` are now handled before any
+// side effect, so neither the data directory, the token file, daemon.json nor the
+// listening socket is created for them.
+//
+// Unknown arguments stay *non-fatal* on purpose: launch scripts and older wrappers may
+// pass extra flags, and refusing to start would turn a harmless extra token into a dead
+// daemon. They are reported on stderr instead of being swallowed, which is what made a
+// typo such as `--alt-ports` look like a successful start on the wrong port.
+const USAGE = [
+  'usage: ego-browserd [--alt-port]',
+  '',
+  '  --alt-port   listen on 127.0.0.1:9774 and attach to Chromium on 127.0.0.1:9775',
+  '               (default: listen on 127.0.0.1:9772, Chromium on 127.0.0.1:9773)',
+  '  -h, --help   print this message and exit',
+  '',
+].join('\n');
+// Synchronous writes: process.exit() must never race a buffered pipe write.
+// A closed/failed stdio (daemonised launch, `| head`) must not turn a usage
+// message into an uncaught EPIPE, so both writes degrade to silence instead.
+function writeSyncSafe(fd, text) {
+  try { writeSync(fd, text); } catch {}
+}
+function parseArgs(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    writeSyncSafe(1, `${USAGE}\n`);
+    process.exit(0);
+  }
+  const known = new Set(['--alt-port']);
+  const unknown = argv.filter((a) => !known.has(a));
+  if (unknown.length > 0) {
+    writeSyncSafe(2, `ego-browserd: ignoring unknown argument(s): ${unknown.map((a) => JSON.stringify(a)).join(', ')}\n${USAGE}\n`);
+  }
+  return argv.includes('--alt-port');
+}
+const ALT_PORT = parseArgs(process.argv.slice(2)) || process.env.EGO_BROWSERD_PORT === '9774';
 const PORT = ALT_PORT ? 9774 : 9772;
 // Chromium attach target is a fixed loopback constant (no env/config input).
 const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;

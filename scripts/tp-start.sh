@@ -122,6 +122,20 @@ if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
   exit 1
 fi
 
+# The second thing we need before touching the running instance is the daemon
+# script itself. A partially removed install (interrupted install.sh, wiped
+# APP_DIR, moved clone) leaves DAEMON_JS pointing at a file that is gone.
+# Spawning it only fails with "Cannot find module" *after* the flush/pkill
+# sweep below has already torn down a healthy daemon and browser — so a broken
+# install silently turns "working browser" into "TP_NOT_READY and nothing
+# running". Validate it here, next to the browser binary, while nothing has
+# been flushed, stopped or launched yet.
+if [ ! -f "$DAEMON_JS" ]; then
+  echo "ERROR: daemon script not found at '$DAEMON_JS'." >&2
+  echo "       Nothing was flushed, stopped or launched. Re-run install.sh (or git pull) to restore it." >&2
+  exit 1
+fi
+
 # Only flush and stop existing instances after a browser executable is available.
 #
 # The sweep below (pkill -f ego-browserd.js / tp-browserd.js / $PROFILE_DIR) does

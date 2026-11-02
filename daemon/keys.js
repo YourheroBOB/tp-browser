@@ -225,7 +225,12 @@ export function keyDescriptor(name) {
   // code 回 null、vk 用自身碼位（CharCode 仍為整數）。
   const keyChar = upper.length === 1 ? upper : c;
   let code = null;
-  if (/[A-Z]/.test(keyChar)) code = 'Key' + keyChar;
+  // 實體鍵碼只從「本身是 ASCII 字母／數字」的單一字元推導。若改用大寫後的 keyChar 判斷，
+  // 'ı'（U+0131）→ 'I'、'ſ'（U+017F）→ 'S' 這類「非 ASCII 但大寫折疊成單一 ASCII 字母」
+  // 的字元會長出 KeyI／KeyS 與借來的 vk（73／83）：dispatch 出去頁面收到的是別的按鍵，
+  // 而不是使用者要輸入的字元。它們和 'ß' 一樣沒有對應的實體按鍵，
+  // 比照其他非 ASCII 字元：code 回 null。
+  if (/^[A-Za-z]$/.test(c)) code = 'Key' + upper;
   else if (/[0-9]/.test(c)) code = 'Digit' + c;
   else if (c === ' ') code = 'Space'; // 與具名鍵 Space 一致（舊版回 null）
 
@@ -240,7 +245,10 @@ export function keyDescriptor(name) {
   return {
     key: c,
     code: legacy && c === ' ' ? null : code,
-    vk: keyChar.charCodeAt(0),
+    // vk 取 keyChar 的碼位：astral 字元（'😀'、'𝕏'）用 charCodeAt 只會拿到代理對的
+    // 高位單元（0xD83D，不是任何字元的碼位），改用 codePointAt 才符合「vk 用自身碼位」。
+    // 對 BMP 字元（含 'a'、'é' 這類先取大寫的）兩者結果完全相同，既有行為不變。
+    vk: keyChar.codePointAt(0),
     text: legacy ? (asciiPrintable ? c : undefined) : printable ? c : undefined,
   };
 }

@@ -264,8 +264,18 @@ const NEWTAB_HTML = `<!DOCTYPE html>
 </html>`;
 
 // ---------- HTTP server ----------
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://127.0.0.1');
+async function handleRequest(req, res) {
+  // Node's HTTP parser only enforces its own request-target character table, so a target
+  // such as `GET http://[ HTTP/1.1` reaches the handler intact while `new URL()` rejects
+  // it. That throw used to reject the async request handler (an unhandled rejection
+  // terminates the process), so the target is validated before anything else runs.
+  let url;
+  try {
+    url = new URL(req.url, 'http://127.0.0.1');
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('bad request target');
+    return;
+  }
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -346,6 +356,21 @@ const server = createServer(async (req, res) => {
     return;
   }
   res.writeHead(404).end('not found');
+}
+
+// A rejected promise from an async request handler is an unhandled rejection, and Node's
+// default policy for those is to terminate the process — so any unexpected throw inside
+// any single route used to take the whole daemon (and every task space it owned) down
+// with it. Every request goes through this boundary and degrades to a 500 instead.
+const server = createServer((req, res) => {
+  Promise.resolve(handleRequest(req, res)).catch((e) => {
+    if (res.headersSent) { try { res.destroy(); } catch {} return; }
+    try {
+      res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: (e && e.name) || 'Error', message: String((e && e.message) || e) } }));
+    } catch {
+      try { res.destroy(); } catch {}
+    }
+  });
 });
 
 // ---------- RPC ----------

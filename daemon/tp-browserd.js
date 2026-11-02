@@ -555,7 +555,11 @@ async function pageCall(p) {
   let result;
   switch (method) {
     case 'goto': result = await h.goto(tid, ...args); break;
-    case 'reload': result = await h.goto(tid, pg.url || 'about:blank', args[0] || {}); break;
+    case 'reload': {
+      const current = (await h.info(tid)).url;
+      result = await h.goto(tid, current || pg.url || 'about:blank', args[0] || {});
+      break;
+    }
     case 'url': result = (await h.info(tid)).url; break;
     case 'title': result = (await h.info(tid)).title; break;
     case 'info': result = await h.info(tid); break;

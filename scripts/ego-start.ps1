@@ -120,6 +120,7 @@ if (-not ([string]::IsNullOrWhiteSpace($BrowserBin))) {
     }
 }
 $TargetExeName = Split-Path $BrowserBin -Leaf
+$TargetBrowserPath = [System.IO.Path]::GetFullPath($BrowserBin)
 
 # 3. Check if already healthy on target port (preserve existing interactive headed desktop browser if -Headed and not -Restart)
 if (-not $Restart) {
@@ -127,12 +128,19 @@ if (-not $Restart) {
         $h = Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/health" -TimeoutSec 2
         $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 2
         if ($h.ok -and $h.chrome -and $cv.'User-Agent' -match 'Windows') {
-            if (-not $Headed -and -not $Edge -and -not $Chrome) {
+            $HealthyBrowserProc = @(Get-CimInstance Win32_Process | Where-Object {
+                ($_.Name -ieq $TargetExeName) -and
+                ($_.ExecutablePath -ieq $TargetBrowserPath) -and
+                ($_.CommandLine -like "*ego-linux*profile-agent*") -and
+                ($_.CommandLine -notlike "*--type=*")
+            })
+            if (-not $Headed -and -not $Edge -and -not $Chrome -and $HealthyBrowserProc.Count -gt 0) {
                 Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
                 exit 0
             } elseif ($Headed) {
                 $HeadedProc = @(Get-CimInstance Win32_Process | Where-Object {
                     ($_.Name -ieq $TargetExeName) -and
+                    ($_.ExecutablePath -ieq $TargetBrowserPath) -and
                     ($_.CommandLine -like "*ego-linux*profile-agent*") -and
                     ($_.CommandLine -like "*--tp-interactive-gui=1*") -and
                     ($_.CommandLine -notlike "*--headless*") -and

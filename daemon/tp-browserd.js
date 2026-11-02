@@ -448,6 +448,15 @@ async function dispatch(method, p) {
       const h = requireHub();
       const sp = store.get(p.spaceId);
       if (!sp) throw new EgoError('UnknownSpace', `no task space ${p.spaceId}`);
+      const owner = findTargetOwner(p.targetId);
+      if (owner) {
+        if (owner.space.id !== sp.id) {
+          const err = new EgoError('TargetInUse', `target ${p.targetId} is already owned by space ${owner.space.id}`);
+          err.name = 'TargetInUse';
+          throw err;
+        }
+        return { label: owner.label, targetId: p.targetId };
+      }
       if (!h.sessions.has(p.targetId)) {
         if (!h.adoptedPopups) h.adoptedPopups = new Set();
         h.adoptedPopups.add(p.targetId);

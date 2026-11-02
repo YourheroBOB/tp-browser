@@ -422,8 +422,17 @@
       if (!o) return { ok: false, error: 'no option matches ' + describePick(pick) };
       chosen.push(o);
     }
-    if (!el.multiple) { el.value = chosen.length ? chosen[0].value : ''; }
-    else { for (const o of opts) o.selected = chosen.includes(o); }
+    if (!el.multiple) {
+      // HTMLSelectElement.value 會選中第一個相同 value 的 option。依 index 或
+      // 可見文字挑到後面那個同值選項時，只寫 .value 會靜默選回第一個。
+      // 先寫 value 保留既有唯一值行為，再把 selected／selectedIndex 釘在真正的 option。
+      el.value = chosen.length ? chosen[0].value : '';
+      if (chosen[0]) {
+        const idx = opts.indexOf(chosen[0]);
+        for (let i = 0; i < opts.length; i++) opts[i].selected = i === idx;
+        if (idx >= 0) el.selectedIndex = idx;
+      }
+    } else { for (const o of opts) o.selected = chosen.includes(o); }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return { ok: true, selected: chosen.map((o) => o.value) };

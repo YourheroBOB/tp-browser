@@ -327,8 +327,14 @@ export class BrowserHub {
     try {
       if (existsSync(STORAGE_VAULT_PATH)) {
         const raw = JSON.parse(readFileSync(STORAGE_VAULT_PATH, 'utf8'));
-        if (raw && typeof raw === 'object') {
+        // 只有「純物件」才配當 storageVault。舊版／手改／半截寫入可能留下陣列或其他形狀：
+        // 一旦把陣列當物件用，寫進去的 origin 會在 JSON.stringify（_persistStorageVault）
+        // 時被整個丟掉，重啟後注入端永遠讀不到；而且 _handleStorageSync 的 origin 數量上限
+        // 會把陣列索引誤當成 origin 計算。寧可丟棄重建，也不要帶著半殘的 vault 繼續跑。
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
           this.storageVault = raw;
+        } else {
+          this.storageVault = {};
         }
       }
     } catch {}
@@ -409,16 +415,35 @@ export class BrowserHub {
   }
 
   async restoreVaultToBrowser() {
+    let params = [];
     try {
-      const params = [];
       for (const c of this.cookieVault.values()) {
         const p = toCookieParam(c);
         if (p) params.push(p);
       }
-      if (params.length > 0) {
-        await this.cdp.send('Storage.setCookies', { cookies: params });
-      }
+    } catch {
+      return { restored: 0, failed: 0 };
+    }
+    if (params.length === 0) return { restored: 0, failed: 0 };
+    try {
+      await this.cdp.send('Storage.setCookies', { cookies: params });
+      return { restored: params.length, failed: 0 };
     } catch {}
+    // Chrome 的 Storage.setCookies 是「全或無」：vault 裡只要有一個壞掉的 cookie
+    // （磁碟內容被手改、欄位不合法、分區資訊不合法），整批數千個登入態會一起還原失敗，
+    // 使用者重啟後看起來就像全部被登出；而外層的空 catch 會讓它完全無聲。
+    // 退回逐筆設定，把損壞隔離在單一 cookie，其餘登入態照樣還原。
+    let restored = 0;
+    let failed = 0;
+    for (const p of params) {
+      try {
+        await this.cdp.send('Storage.setCookies', { cookies: [p] });
+        restored++;
+      } catch {
+        failed++;
+      }
+    }
+    return { restored, failed };
   }
 
   async syncVaultNow() {

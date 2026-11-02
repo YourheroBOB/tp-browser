@@ -555,10 +555,23 @@ export class BrowserHub {
     let host = '';
     try { host = new URL(curUrl).hostname.toLowerCase(); } catch {}
     const matchDomains = new Set();
+    // 最後兩段在多層公共後綴（com.tw、co.uk…）不是可註冊域。
+    // 拿來當比對域時，換帳號會刪掉該後綴底下所有無關網站的 cookie 與 storage。
+    const multiPartPublicSuffixes = new Set([
+      'com.tw', 'org.tw', 'net.tw', 'idv.tw', 'gov.tw', 'edu.tw',
+      'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'net.uk',
+      'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+      'co.jp', 'or.jp', 'ne.jp', 'ac.jp',
+      'co.kr', 'or.kr', 'ne.kr',
+      'com.br', 'com.mx', 'com.hk', 'com.sg', 'com.tr', 'com.cn', 'com.ar',
+      'co.nz', 'co.za', 'co.in', 'co.id',
+    ]);
     if (host) {
       matchDomains.add(host);
       const parts = host.split('.');
-      if (parts.length >= 2) matchDomains.add(parts.slice(-2).join('.'));
+      const last2 = parts.slice(-2).join('.');
+      const labels = multiPartPublicSuffixes.has(last2) ? 3 : 2;
+      if (parts.length >= labels) matchDomains.add(parts.slice(-labels).join('.'));
     }
     if (/microsoft|live\.com|office|azure|hotmail/i.test(host)) {
       for (const d of ['microsoftonline.com', 'live.com', 'microsoft.com', 'office.com', 'azure.com']) matchDomains.add(d);

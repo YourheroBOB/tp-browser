@@ -638,3 +638,404 @@ describe('applyReapPlan 與預設政策', () => {
     assert.equal(DEFAULT_POLICY.reapIdleWhenNoLiveTargets, false);
   });
 });
+
+const LIVE = ['T-EDGE-LIVE'];
+
+test('DEFAULT_POLICY is frozen', () => {
+  assert.equal(Object.isFrozen(DEFAULT_POLICY), true);
+  assert.equal(DEFAULT_POLICY.maxSpaces, 50);
+  assert.equal(DEFAULT_POLICY.reapIdleWhenNoLiveTargets, false);
+});
+
+test('non-object pages are ignored and non-string targetIds are unbound', () => {
+  const info = classifySpace({
+    id: 1,
+    createdAt: 0,
+    pages: {
+      a: null,
+      b: ['T-EDGE-LIVE'],
+      c: 'T-EDGE-LIVE',
+      d: { targetId: '' },
+      e: { targetId: 1 },
+      f: { targetId: 'T-EDGE-LIVE' },
+      g: { targetId: 'T-EDGE-GONE' },
+    },
+  }, { liveTargets: ['T-EDGE-LIVE', '1'], now: 0 });
+  assert.equal(info.kind, 'live');
+  assert.deepEqual(info.entries.map((e) => e.label), ['d', 'e', 'f', 'g']);
+  assert.deepEqual(info.livePages.map((e) => e.label), ['f']);
+  assert.deepEqual(info.unboundPages.map((e) => e.label), ['d', 'e']);
+  assert.deepEqual(info.deadPages.map((e) => e.label), ['g']);
+
+  const empty = classifySpace(
+    { id: 2, pages: { a: null, b: [] } },
+    { liveTargets: LIVE, now: 0 },
+  );
+  assert.equal(empty.kind, 'empty');
+  assert.equal(empty.entries.length, 0);
+});
+
+test('target ids are not trimmed and non-strings never join the live set', () => {
+  const set = toTargetSet([' ', 'T-EDGE-LIVE', '', 1, null]);
+  assert.equal(set.has(' '), true);
+  assert.equal(set.has(''), false);
+  assert.equal(set.has('1'), false);
+  assert.equal(set.size, 2);
+  assert.equal(toTargetSet('T-EDGE-LIVE').size, 0);
+  assert.deepEqual([...toTargetSet(new Set(['', 'T-EDGE-LIVE', 2]))], ['T-EDGE-LIVE']);
+  const info = classifySpace(
+    { id: 1, pages: { p1: { targetId: ' ' } } },
+    { liveTargets: set, now: 0 },
+  );
+  assert.equal(info.kind, 'live');
+});
+
+test('a bare-string liveTargetIds value trips the empty-live safety valve', () => {
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: 'T-EDGE-LIVE',
+    spaces: [{ id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } }],
+  });
+  assert.equal(plan.reason, 'no-live-targets');
+  assert.deepEqual(plan.closeSpaces, []);
+  assert.equal(plan.stats.examined, 1);
+});
+
+test('idle is true exactly when ageMs >= idleSpaceMs', () => {
+  const created = 5_000;
+  const idleSpaceMs = 1_000;
+  const at = (now) => classifySpace(
+    { id: 1, createdAt: created, pages: {} },
+    { liveTargets: LIVE, now, policy: { idleSpaceMs } },
+  );
+  assert.equal(at(created + idleSpaceMs - 1).ageMs, 999);
+  assert.equal(at(created + idleSpaceMs - 1).idle, false);
+  assert.equal(at(created + idleSpaceMs).ageMs, 1_000);
+  assert.equal(at(created + idleSpaceMs).idle, true);
+});
+
+test('future createdAt clamps to age 0 and an unparsable createdAt is never idle', () => {
+  const now = Date.parse('2026-01-01T00:00:00.000Z');
+  const future = classifySpace({
+    id: 1,
+    createdAt: '2026-06-01T00:00:00.000Z',
+    pages: {},
+  }, { liveTargets: LIVE, now, policy: { idleSpaceMs: 0 } });
+  assert.equal(future.ageMs, 0);
+  assert.equal(future.idle, true);
+
+  const bogus = classifySpace({
+    id: 2,
+    createdAt: 'not-a-date',
+    pages: {},
+  }, { liveTargets: LIVE, now, policy: { idleSpaceMs: 0 } });
+  assert.equal(bogus.ageMs, null);
+  assert.equal(bogus.idle, false);
+
+  const kept = planReap({
+    now,
+    liveTargetIds: LIVE,
+    policy: { idleSpaceMs: 30 * 60 * 1000 },
+    spaces: [
+      { id: 1, createdAt: '2026-06-01T00:00:00.000Z', pages: { p1: { targetId: null } } },
+      { id: 2, createdAt: 'not-a-date', pages: { p1: { targetId: null } } },
+    ],
+  });
+  assert.deepEqual(kept.closeSpaces, []);
+
+  const strict = planReap({
+    now,
+    liveTargetIds: LIVE,
+    policy: { idleSpaceMs: 0, reapDeadSpaces: false, maxSpaces: 50 },
+    spaces: [
+      { id: 1, createdAt: '2026-06-01T00:00:00.000Z', pages: { p1: { targetId: null } } },
+      { id: 2, createdAt: 'not-a-date', pages: {} },
+    ],
+  });
+  assert.deepEqual(strict.closeSpaces, [1]);
+});
+
+test('infinite idleSpaceMs never idles and a non-object policy keeps the default window', () => {
+  const info = classifySpace(
+    { id: 1, createdAt: 0, pages: {} },
+    { liveTargets: LIVE, now: 1_000_000, policy: { idleSpaceMs: Number.POSITIVE_INFINITY } },
+  );
+  assert.equal(info.ageMs, 1_000_000);
+  assert.equal(info.idle, false);
+
+  const created = 1_700_000_000_000;
+  const plan = planReap({
+    now: created + 1,
+    liveTargetIds: LIVE,
+    policy: ['not-a-policy'],
+    spaces: [{ id: 1, createdAt: created, pages: { p1: { targetId: null } } }],
+  });
+  assert.deepEqual(plan.closeSpaces, []);
+});
+
+test('pinned must be boolean true and a single numeric protect id is stringified', () => {
+  const pinned = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    spaces: [
+      { id: 1, pinned: 'true', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+      { id: 2, pinned: true, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+    ],
+  });
+  assert.deepEqual(pinned.closeSpaces, [1]);
+  assert.equal(pinned.stats.protected, 1);
+  assert.deepEqual(pinned.dropPages, []);
+
+  const protectedId = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    protect: 2,
+    spaces: [
+      { id: 2, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+      { id: 3, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+    ],
+  });
+  assert.deepEqual(protectedId.closeSpaces, [3]);
+  assert.equal(protectedId.stats.protected, 1);
+
+  const zeroId = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    protect: [0],
+    spaces: [{ id: 0, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } }],
+  });
+  assert.equal(zeroId.stats.examined, 1);
+  assert.equal(zeroId.stats.skipped, 0);
+  assert.deepEqual(zeroId.closeSpaces, []);
+});
+
+test('entries without an id are skipped', () => {
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    spaces: [null, 1, { pages: {} }, { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } }],
+  });
+  assert.equal(plan.stats.skipped, 3);
+  assert.equal(plan.stats.examined, 1);
+  assert.equal(plan.stats.live, 1);
+});
+
+test('maxSpaces never sacrifices a live space, and null is not the same as NaN', () => {
+  const twoLive = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { maxSpaces: 1, idleSpaceMs: 60_000 },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+    ],
+  });
+  assert.deepEqual(twoLive.closeSpaces, []);
+  assert.equal(twoLive.stats.live, 2);
+  assert.equal(twoLive.stats.overCap, 0);
+
+  const zeroCap = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { maxSpaces: 0, idleSpaceMs: 60_000 },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 3, createdAt: 0, pages: { p1: { targetId: null } } },
+    ],
+  });
+  assert.deepEqual(zeroCap.closeSpaces, [3]);
+  assert.equal(zeroCap.stats.overCap, 1);
+  assert.equal(zeroCap.stats.live, 2);
+
+  const pair = (maxSpaces) => planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { maxSpaces, idleSpaceMs: 60_000, reapDeadSpaces: true },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, createdAt: 0, pages: { p1: { targetId: null } } },
+    ],
+  });
+  assert.deepEqual(pair(null).closeSpaces, [2]);
+  assert.deepEqual(pair(Number.NaN).closeSpaces, []);
+  assert.deepEqual(pair(-1).closeSpaces, []);
+
+  const numericString = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { maxSpaces: '1', idleSpaceMs: 60_000 },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, createdAt: 0, pages: { p1: { targetId: null } } },
+      { id: 3, createdAt: 0, pages: { p1: { targetId: null } } },
+    ],
+  });
+  assert.deepEqual(numericString.closeSpaces, [2, 3]);
+});
+
+test('closing a space for the cap also drops its pending page removals', () => {
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { maxSpaces: 1, idleSpaceMs: 60_000, dropDeadPages: true },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      {
+        id: 2,
+        createdAt: 0,
+        pages: {
+          p1: { targetId: 'T-EDGE-GONE' },
+          p2: { targetId: null },
+        },
+      },
+    ],
+  });
+  assert.deepEqual(plan.closeSpaces, [2]);
+  assert.deepEqual(plan.dropPages, []);
+  assert.equal(plan.stats.overCap, 1);
+});
+
+test('duplicate space ids are all listed and ordered by id', () => {
+  const dead = (name) => ({
+    id: 2,
+    name,
+    createdAt: 0,
+    pages: { p1: { targetId: 'T-EDGE-GONE' } },
+  });
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    spaces: [
+      { id: 10, name: 'z', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+      dead('b'),
+      dead('a'),
+    ],
+  });
+  assert.deepEqual(plan.closeSpaces, [2, 2, 10]);
+});
+
+test('staleActiveTargets keeps only a non-empty string on an open unprotected space', () => {
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { idleSpaceMs: 60_000, reapDeadSpaces: true, dropDeadPages: true },
+    spaces: [
+      { id: 1, activeTargetId: 'T-EDGE-GONE', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, activeTargetId: 5, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 3, activeTargetId: '', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 4, activeTargetId: 'T-EDGE-LIVE', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 5, pinned: true, activeTargetId: 'T-EDGE-GONE', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+      { id: 6, activeTargetId: 'T-EDGE-GONE', createdAt: 0, pages: { p1: { targetId: 'T-EDGE-GONE' } } },
+    ],
+  });
+  assert.deepEqual(plan.staleActiveTargets, [{ spaceId: 1, targetId: 'T-EDGE-GONE' }]);
+  assert.deepEqual(plan.closeSpaces, [6]);
+  assert.deepEqual(plan.dropPages, []);
+  assert.equal(plan.stats.protected, 1);
+  assert.equal(plan.stats.live, 4);
+  assert.equal(plan.stats.closed, 1);
+});
+
+test('an idle mixed space is closed whole even when dead spaces are kept', () => {
+  const plan = planReap({
+    now: 5_000,
+    liveTargetIds: LIVE,
+    policy: { reapDeadSpaces: false, idleSpaceMs: 1_000, dropDeadPages: true, maxSpaces: 50 },
+    spaces: [{
+      id: 2,
+      createdAt: 0,
+      pages: {
+        p1: { targetId: 'T-EDGE-GONE' },
+        p2: { targetId: null },
+      },
+    }],
+  });
+  assert.deepEqual(plan.closeSpaces, [2]);
+  assert.deepEqual(plan.dropPages, []);
+});
+
+test('dropDeadPages false leaves dead pages on a space that stays open', () => {
+  const plan = planReap({
+    now: 0,
+    liveTargetIds: LIVE,
+    policy: { dropDeadPages: false, idleSpaceMs: 60_000 },
+    spaces: [{
+      id: 1,
+      createdAt: 0,
+      pages: {
+        p1: { targetId: 'T-EDGE-LIVE' },
+        p2: { targetId: 'T-EDGE-GONE' },
+      },
+    }],
+  });
+  assert.deepEqual(plan.closeSpaces, []);
+  assert.deepEqual(plan.dropPages, []);
+  assert.equal(plan.stats.live, 1);
+});
+
+test('reapIdleWhenNoLiveTargets classifies every bound page as dead', () => {
+  const now = 10_000_000;
+  const plan = planReap({
+    now,
+    liveTargetIds: [],
+    policy: {
+      reapIdleWhenNoLiveTargets: true,
+      idleSpaceMs: 30 * 60 * 1000,
+      reapDeadSpaces: true,
+      maxSpaces: 50,
+    },
+    spaces: [
+      { id: 1, createdAt: 0, pages: { p1: { targetId: 'T-EDGE-LIVE' } } },
+      { id: 2, createdAt: now, pages: { p1: { targetId: null } } },
+    ],
+  });
+  assert.equal(plan.reason, undefined);
+  assert.deepEqual(plan.closeSpaces, [1]);
+  assert.equal(plan.stats.live, 0);
+});
+
+test('applyReapPlan skips closed-space drops and malformed rows when delete is absent', () => {
+  const calls = [];
+  const result = applyReapPlan({
+    removePage(spaceId, label) { calls.push([spaceId, label]); },
+  }, {
+    closeSpaces: [1],
+    dropPages: [
+      { spaceId: 1, label: 'p1' },
+      { spaceId: '1', label: 'p2' },
+      { spaceId: 2, label: 'p3' },
+      { spaceId: 3, label: 0 },
+      { spaceId: 4 },
+      { spaceId: 5, label: null },
+      null,
+      'p9',
+    ],
+  });
+  assert.deepEqual(result.closedSpaces, []);
+  assert.deepEqual(calls, [[2, 'p3'], [3, 0]]);
+  assert.deepEqual(result.droppedPages, [
+    { spaceId: 2, label: 'p3' },
+    { spaceId: 3, label: 0 },
+  ]);
+});
+
+test('applyReapPlan preserves id types and ignores a store without the methods', () => {
+  const calls = [];
+  applyReapPlan({
+    deleteSpace(id) { calls.push(['del', id]); },
+    removePage(id, label) { calls.push(['drop', id, label]); },
+  }, {
+    closeSpaces: [7, '8'],
+    dropPages: [{ spaceId: 9, label: '' }],
+  });
+  assert.deepEqual(calls, [['del', 7], ['del', '8'], ['drop', 9, '']]);
+  assert.deepEqual(applyReapPlan(null, null), { closedSpaces: [], droppedPages: [] });
+  assert.deepEqual(
+    applyReapPlan(
+      { deleteSpace: 1, removePage: 'no' },
+      { closeSpaces: [1], dropPages: [{ spaceId: 1, label: 'p1' }] },
+    ),
+    { closedSpaces: [], droppedPages: [] },
+  );
+});

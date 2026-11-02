@@ -62,6 +62,33 @@ function Test-BrowserBinPath([string]$Path) {
     return ($null -eq (Get-BrowserBinProblem -Path $Path))
 }
 
+# Start-Process -ArgumentList 收到單一字串時，Windows PowerShell 5.1 與 PowerShell 7
+# 都會把它當成「一個」參數。把整段 CommonFlags 塞進去，Chrome 吃不到
+# --user-data-dir 與 --remote-debugging-port，有頭視窗會開到使用者日常設定檔。
+# 這裡依雙引號拆開；引號本身不進入參數。一元逗號避免呼叫端把陣列再展開一次。
+function Split-CommandLine([string]$Command) {
+    $result = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrEmpty($Command)) { return ,@() }
+    $buf = New-Object System.Text.StringBuilder
+    $quoted = $false
+    foreach ($ch in $Command.ToCharArray()) {
+        if ($ch -eq [char]'"') {
+            $quoted = -not $quoted
+            continue
+        }
+        if (-not $quoted -and [char]::IsWhiteSpace($ch)) {
+            if ($buf.Length -gt 0) {
+                [void]$result.Add($buf.ToString())
+                [void]$buf.Clear()
+            }
+            continue
+        }
+        [void]$buf.Append($ch)
+    }
+    if ($buf.Length -gt 0) { [void]$result.Add($buf.ToString()) }
+    return ,$result.ToArray()
+}
+
 $ChromePaths = @(
     "C:\Program Files\Google\Chrome\Application\chrome.exe",
     "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -274,14 +301,15 @@ if (-not $Headed) {
     $GuiPs1 = Join-Path $DataDir "scripts\launch-headed-gui.ps1"
     New-Item -ItemType Directory -Force -Path (Split-Path $GuiPs1) | Out-Null
     $EscBrowser = $BrowserBin.Replace("'", "''")
-    $EscFlags = $CommonFlags.Replace("'", "''")
-    Set-Content -Path $GuiPs1 -Value "Start-Process -FilePath '$EscBrowser' -ArgumentList '$EscFlags' -WindowStyle Normal" -Encoding UTF8
+    $SplitFlags = Split-CommandLine $CommonFlags
+    $ArgListLiteral = @($SplitFlags | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ','
+    Set-Content -Path $GuiPs1 -Value "Start-Process -FilePath '$EscBrowser' -ArgumentList @($ArgListLiteral) -WindowStyle Normal" -Encoding UTF8
     $TaskName = "TooPowerBrowserHeaded"
     $TaskTr = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$GuiPs1`""
     & schtasks.exe /Create /TN $TaskName /TR $TaskTr /SC ONCE /ST 00:00 /IT /F 2>$null | Out-Null
     & schtasks.exe /Run /TN $TaskName 2>$null | Out-Null
 } else {
-    Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags -WindowStyle Normal | Out-Null
+    Start-Process -FilePath $BrowserBin -ArgumentList @(Split-CommandLine $CommonFlags) -WindowStyle Normal | Out-Null
 }
 
 for ($i = 0; $i -lt 20; $i++) {
@@ -297,7 +325,7 @@ try {
     $null = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 1
 } catch {
     if ($Headed -and $CurrentSessionId -eq 0) {
-        Start-Process -FilePath $BrowserBin -ArgumentList $CommonFlags | Out-Null
+        Start-Process -FilePath $BrowserBin -ArgumentList @(Split-CommandLine $CommonFlags) | Out-Null
         for ($i = 0; $i -lt 12; $i++) {
             Start-Sleep -Milliseconds 500
             try {

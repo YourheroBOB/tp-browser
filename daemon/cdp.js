@@ -155,7 +155,13 @@ export class Cdp {
 
   _recv(raw) {
     let msg;
-    try { msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString()); } catch { return; }
+    try {
+      const text = typeof raw === 'string' ? raw : (raw == null ? '' : raw.toString());
+      msg = JSON.parse(text);
+    } catch { return; }
+    // JSON.parse('null')／純量／陣列都能過解析。對 null 取 .id 會拋 TypeError，
+    // 從 WebSocket onmessage 冒出去；陣列則會被當成一則 method 為 undefined 的事件派發。
+    if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
       if (!p) return;

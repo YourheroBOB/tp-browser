@@ -181,14 +181,37 @@ usage:
 
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }
 
+// /rpc 原本完全沒有 deadline：daemon 只要「接了連線卻不回應」（事件迴圈被 CDP 洪流綁死、
+// 半開連線、被本機防火牆吞掉），`tp-browser spaces` 就會永遠掛在那裡，既不結束也不報錯，
+// 自動化流程因此整批卡死，使用者只看到一片空白。health()／doctor() 早就有 2.5 秒上限，
+// 這裡比照辦理。TP_RPC_TIMEOUT_MS 可覆寫（測試把假 daemon 綁在 OS 指派的臨時埠時用），
+// 預設 15 秒——對本機 space.list 這種查詢而言已經非常寬鬆。
+function rpcTimeoutMs() {
+  const v = Number(process.env.TP_RPC_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 15000;
+}
+
 async function rpcCmd(port, method, params) {
   const tok = readToken();
-  const res = await fetch(`${daemonBase(port)}/rpc`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tp-token': tok, 'x-ego-token': tok },
-    body: JSON.stringify({ id: 1, method, params: params || {} }),
-  });
-  const j = await res.json();
+  const timeoutMs = rpcTimeoutMs();
+  let j;
+  try {
+    const res = await fetch(`${daemonBase(port)}/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-tp-token': tok, 'x-ego-token': tok },
+      body: JSON.stringify({ id: 1, method, params: params || {} }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    j = await res.json();
+  } catch (e) {
+    // 連線被拒（ECONNREFUSED）等錯誤維持原樣往上丟，只有逾時才換成看得懂的訊息，
+    // 讓使用者知道是「daemon 卡住不回」而不是「daemon 沒開」。
+    const name = e && typeof e === 'object' ? e.name : undefined;
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new Error(`daemon on 127.0.0.1:${port} did not answer /rpc (${method}) within ${timeoutMs}ms`);
+    }
+    throw e;
+  }
   if (!j.ok) throw new Error(`${j.error?.name}: ${j.error?.message}`);
   return j.result;
 }

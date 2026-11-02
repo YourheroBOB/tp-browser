@@ -1,6 +1,6 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // 舊版、手動編輯或半寫入的 ledger 可能沒有 nextSpaceId，或它的值落後於既有 space id。
@@ -26,6 +26,18 @@ function normalizeLedger(data) {
   // labelSeq 只補成一般物件；各空間的序號內容交給 nextLabel 的既有邏輯維護。
   const seq = data.labelSeq;
   if (seq === null || typeof seq !== 'object' || Array.isArray(seq)) data.labelSeq = {};
+
+  // spaces 缺失或不是物件時，list／get／create 會在 Object.values／Object.hasOwn 上拋 TypeError，
+  // daemon 載入後開不了任何空間。收成空物件。陣列維持原樣，避免把還能用索引讀到的資料直接丟掉。
+  if (data.spaces == null || typeof data.spaces !== 'object') data.spaces = {};
+  else {
+    for (const key of Object.keys(data.spaces)) {
+      const space = data.spaces[key];
+      if (space == null || typeof space !== 'object' || Array.isArray(space)) continue;
+      // pages 為 null／純量時，setPage／removePage 的 Object.hasOwn 會拋 TypeError。
+      if (space.pages == null || typeof space.pages !== 'object') space.pages = {};
+    }
+  }
 }
 
 // `__proto__` 是 Object.prototype 上的存取器：`obj['__proto__'] = page` 不會建立自有鍵，
@@ -81,14 +93,20 @@ export class Store {
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
     const body = JSON.stringify(this.data, null, 1);
+    // ledger 含瀏覽 URL 與 title。writeFileSync 的 mode 仍會被 umask 放寬成 0644，
+    // 因此寫入後再 chmod 0600，避免同機其他帳號讀到歷程。權限收緊失敗不阻擋落地。
+    const tighten = (path) => { try { chmodSync(path, 0o600); } catch { /* 權限收緊失敗不阻擋資料落地 */ } };
     try {
-      writeFileSync(tmp, body);
+      writeFileSync(tmp, body, { mode: 0o600 });
+      tighten(tmp);
       renameSync(tmp, this.file);
+      tighten(this.file);
     } catch {
       try {
         // rename 可能因 Windows 防毒／索引器鎖檔（EPERM）、跨裝置（EXDEV）
         // 或目標型別不符（EISDIR）而失敗：退回直接覆寫正本，資料仍會落地。
-        writeFileSync(this.file, body);
+        writeFileSync(this.file, body, { mode: 0o600 });
+        tighten(this.file);
       } finally {
         // 不論直接寫入成功或失敗（例外照樣往外丟），都不能把
         // `${file}.${pid}.tmp` 留在磁碟上。
@@ -96,11 +114,21 @@ export class Store {
       }
     }
   }
-  list() { return Object.values(this.data.spaces); }
+  list() {
+    const spaces = this.data.spaces;
+    if (spaces == null || typeof spaces !== 'object') return [];
+    return Object.values(spaces);
+  }
   // 只認 `spaces` 的自有鍵：`spaces['__proto__']`／`spaces['constructor']` 會回傳原型上的
   // 東西（分別是 Object.prototype 與 Object 函式），若不擋就會被當成「存在的空間」。
-  get(id) { return Object.hasOwn(this.data.spaces, id) ? (this.data.spaces[id] ?? null) : null; }
+  get(id) {
+    const spaces = this.data.spaces;
+    if (spaces == null || typeof spaces !== 'object') return null;
+    return Object.hasOwn(spaces, id) ? (spaces[id] ?? null) : null;
+  }
   create({ name, profileId = 'agent' }) {
+    // 與 load() 同一條正規化：避免執行期 spaces／labelSeq 被改壞後，nextSpaceId++ 變成 NaN。
+    normalizeLedger(this.data);
     const id = this.data.nextSpaceId++;
     this.data.spaces[id] = {
       id, name, profileId, ownership: 'agent', state: 'active',
@@ -135,17 +163,34 @@ export class Store {
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);
+    // pages 為 null／純量時 Object.hasOwn 會拋 TypeError。
+    if (!s || s.pages == null || typeof s.pages !== 'object') return;
     // 只認 `pages` 的自有鍵：`s.pages['__proto__']` 是 Object.prototype（truthy、非自有），
     // 若照舊 Object.assign 下去就是全域原型污染。
-    if (!s || !Object.hasOwn(s.pages, label)) return;
+    if (!Object.hasOwn(s.pages, label)) return;
     const page = s.pages[label];
-    if (!page) return;
-    Object.assign(page, patch);
+    if (page == null || typeof page !== 'object' || Array.isArray(page)) return;
+    // 保留字 label 不更新（與 bindPage 拒絕寫入的理由相同）；setPage 維持不拋錯的契約。
+    if (RESERVED_PAGE_LABELS.has(String(label))) return;
+    // Object.assign 走 [[Set]]，patch Own 鍵 `__proto__` 會改掉 page 的原型。
+    // defineProperty 只建立自有資料屬性，不觸發該 setter。
+    if (patch != null && typeof patch === 'object' && !Array.isArray(patch)) {
+      for (const key of Object.keys(patch)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        Object.defineProperty(page, key, {
+          value: patch[key],
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+    }
     this.persist();
   }
   bindPage(spaceId, label, targetId, openedBy = 'agent') {
     const s = this.get(spaceId);
     if (!s) throw new Error(`unknown space ${spaceId}`);
+    if (s.pages == null || typeof s.pages !== 'object') s.pages = {};
     // 非法 label 若照舊直接指派，會改掉整個 pages 物件的原型（分頁在 persist 後消失）；
     // 因此明確拒絕，而不是靜默寫入一份壞掉的 ledger。
     assertPageLabel(label);
@@ -155,13 +200,14 @@ export class Store {
   addPage(spaceId, label, targetId, openedBy = 'agent') {
     const s = this.get(spaceId);
     if (!s) throw new Error(`unknown space ${spaceId}`);
+    if (s.pages == null || typeof s.pages !== 'object') s.pages = {};
     assertPageLabel(label);
     s.pages[label] = { targetId, openedBy, title: '', url: '' };
     this.persist();
   }
   removePage(spaceId, label) {
     const s = this.get(spaceId);
-    if (!s) return;
+    if (!s || s.pages == null || typeof s.pages !== 'object') return;
     // 非自有鍵一律視為不存在（避免把 Object.prototype 上的同名成員當成分頁）。
     if (!Object.hasOwn(s.pages, label)) return;
     const page = s.pages[label];
@@ -172,10 +218,12 @@ export class Store {
     this.persist();
   }
   deleteSpace(id) {
-    delete this.data.spaces[id];
+    if (this.data.spaces != null && typeof this.data.spaces === 'object') delete this.data.spaces[id];
     // labelSeq 是「每個空間各自」的標籤計數器，空間刪掉後必須一起清掉；
     // 否則 ledger 只增不減（回收器每次回收都留下一筆孤兒 labelSeq[id]）。
-    if (this.data.labelSeq) delete this.data.labelSeq[id];
+    // 純量／陣列在 strict mode 下 delete 會拋 TypeError，這裡只對一般物件刪鍵。
+    const seq = this.data.labelSeq;
+    if (seq != null && typeof seq === 'object' && !Array.isArray(seq)) delete seq[id];
     this.persist();
   }
 }

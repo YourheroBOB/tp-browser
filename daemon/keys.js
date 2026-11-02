@@ -208,8 +208,9 @@ export function keyDescriptor(name) {
     if (isLegacyUnsupportedFKeyCall(name)) return null;
     // macOS（darwin）上 ControlOrMeta 是 Meta（Command）鍵：描述子隨之改成 Meta，
     // 與 modifierBit 的平台判斷一致，避免 dispatch 出 Ctrl+A 而非 Cmd+A。
-    if (name === 'ControlOrMeta' && process.platform === 'darwin') return NAMED.Meta;
-    return NAMED[name];
+    // 回傳複本：呼叫端若改到 text／vk，不能寫壞全域對照表，否則後續按鍵全部錯位。
+    if (name === 'ControlOrMeta' && process.platform === 'darwin') return { ...NAMED.Meta };
+    return { ...NAMED[name] };
   }
   // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；
   // 舊版用 name.length === 1 會把整個 emoji 判成未知鍵（所以 parseChord('😀') 拋 unknown key）。
@@ -226,7 +227,9 @@ export function keyDescriptor(name) {
   const chars = [...name];
   if (chars.length !== 1) return null;
   const c = chars[0];
-  const upper = c.toUpperCase();
+  // ASCII 字母不可用 locale 的 toUpperCase()：tr-TR 底下 'i' 會變成 U+0130 'İ'，
+  // code 變成 'Keyİ'、vk 變成 304，而不是美式鍵盤的 KeyI／73。
+  const upper = /^[a-z]$/.test(c) ? String.fromCharCode(c.charCodeAt(0) - 32) : c.toUpperCase();
   // 只採用「單一碼位」的大寫對應來推導實體鍵碼：多數單一字元的大寫是單一碼位，但
   // 'ß'.toUpperCase() 是 'SS'、'ﬀ' 是 'FF'、'ΐ' 是 'Ϊ' + 組合重音、'ǰ' 是 'J' + ˇ。
   // 若直接拿多碼位的結果推導，會得到不存在的 code（'KeySS'）與借來的 vk（'S' = 83），

@@ -179,8 +179,10 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
 
   // 上限：只犧牲「非存活、非受保護」的空間，由最舊的開始；永不為滿足上限而關閉存活空間。
   let overCap = 0;
-  const maxSpaces = Number(p.maxSpaces);
-  if (Number.isFinite(maxSpaces) && maxSpaces >= 0) {
+  // null／NaN／非數字＝不設上限（見 DEFAULT_POLICY 註解）。
+  // Number(null) === 0，若照舊轉換，會把「無上限」做成「能關的空間全部關掉」。
+  const maxSpaces = p.maxSpaces;
+  if (typeof maxSpaces === 'number' && Number.isFinite(maxSpaces) && maxSpaces >= 0) {
     const remaining = ordered.filter((s) => !closed.has(String(s.id)));
     const overflow = remaining.length - maxSpaces;
     if (overflow > 0) {

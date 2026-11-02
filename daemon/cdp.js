@@ -88,6 +88,25 @@ export class Cdp {
         previous.onclose = null;
         try { previous.close(); } catch {}
       }
+      // 第二個 connect() 若在前一次握手完成前進來，this.ws 仍是 null，上面的區塊不會跑。
+      // 兩條 socket 會同時開著，onmessage 都灌進這條 client。先拆掉回呼、拒絕舊的 promise，再關掉。
+      const pendingSockets = [...this.connectSockets];
+      const pendingRejects = [...this.connectRejects];
+      if (pendingSockets.length > 0 || pendingRejects.length > 0) {
+        for (const pendingWs of pendingSockets) {
+          pendingWs.onopen = null;
+          pendingWs.onmessage = null;
+          pendingWs.onerror = null;
+          pendingWs.onclose = null;
+        }
+        const superseded = new Error(`CDP connect superseded: ${this.wsUrl}`);
+        for (const rejectConnect of pendingRejects) {
+          try { rejectConnect(superseded); } catch { /* 舊的 connect() 已 settle */ }
+        }
+        for (const pendingWs of pendingSockets) {
+          try { pendingWs.close(); } catch { /* 握手 socket 可能已關閉 */ }
+        }
+      }
       const ws = new WebSocket(this.wsUrl);
       this.connectSockets.add(ws);
       // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。
@@ -130,7 +149,11 @@ export class Cdp {
         this.ws = ws;
         settle(true, this);
       };
-      ws.onerror = () => { settle(false, new Error(`CDP connect failed: ${this.wsUrl}`)); };
+      ws.onerror = () => {
+        // 先以連線失敗定案，再關 socket。已由逾時定案時 settle 回 false，不再關第二次。
+        if (!settle(false, new Error(`CDP connect failed: ${this.wsUrl}`))) return;
+        try { ws.close(); } catch { /* socket 可能已在關閉中 */ }
+      };
       ws.onclose = () => {
         if (!settled) {
           // 握手完成前就斷線：不可讓 connect() 永遠 pending。close() 已發生時理由必須是 closed。

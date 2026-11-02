@@ -983,9 +983,9 @@ export class BrowserHub {
     const y = position ? box.y + position.y : box.cy;
     for (let i = 0; i < clickCount; i++) {
       await this.mouseInput(targetId, 'mouseMoved', x, y);
-      await this.mouseInput(targetId, 'mousePressed', x, y, { button, clickCount: 1 });
+      await this.mouseInput(targetId, 'mousePressed', x, y, { button, clickCount: i + 1 });
       if (delay) await sleep(delay);
-      await this.mouseInput(targetId, 'mouseReleased', x, y, { button, clickCount: 1 });
+      await this.mouseInput(targetId, 'mouseReleased', x, y, { button, clickCount: i + 1 });
       if (i + 1 < clickCount) await sleep(40);
     }
     return this.actionReceipt(targetId, since);

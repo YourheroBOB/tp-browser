@@ -142,9 +142,6 @@ test('persist：原子寫入後不遺留 .tmp 暫存檔', (t) => {
 
 test(
   '載入缺少 nextSpaceId 的舊 ledger 時應能重建可用 id',
-  {
-    skip: '產品 bug（daemon/store.js）：load() 未驗證 schema，ledger 若缺 nextSpaceId（舊版或半寫入檔案），create() 會產生 NaN id 並以字串鍵 "NaN" 寫回。待補 schema 正規化後移除 skip。',
-  },
   (t) => {
     const dir = tmpDir(t);
     const file = join(dir, 'store.json');
@@ -153,5 +150,9 @@ test(
     const space = store.create({ name: 'legacy' });
     assert.equal(Number.isInteger(space.id), true);
     assert.equal(store.get(1).name, 'legacy');
+    // 寫回的 ledger 不得出現 "NaN" 鍵，且 nextSpaceId 已正規化成正整數。
+    const saved = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(Object.hasOwn(saved.spaces, 'NaN'), false);
+    assert.equal(Number.isInteger(saved.nextSpaceId) && saved.nextSpaceId > 1, true);
   },
 );

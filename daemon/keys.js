@@ -243,6 +243,17 @@ export function keyDescriptor(name) {
   else if (/[0-9]/.test(c)) code = 'Digit' + c;
   else if (c === ' ') code = 'Space'; // 與具名鍵 Space 一致（舊版回 null）
 
+  // 未成對的代理碼位（U+D800–U+DFFF）不是合法的 Unicode 純量值，也不是可按的字元：
+  // '😀'.slice(0, 1)、'😀'[0]、或以 UTF-16 索引切字都會留下半個代理對，而
+  // `[...name].length === 1` 對「單獨一個代理碼位」是成立的，於是舊版會把它整顆
+  // 當成單一字元往下走，最後把 0xD83D 這種保留區數值當 windowsVirtualKeyCode 送出
+  // （與 w12 修掉的「非 BMP 字元取代理對前半」是同一類錯誤的另一個入口）。
+  // 這類輸入仍保留描述子（既有 w11 的 U+0080–U+2FFF 全範圍掃描要求 U+D800–U+DFFF
+  // 也必須有描述子，因此不能改回 null），但 vk 用 0：CDP 對 windowsVirtualKeyCode 0
+  // 的語意是「沒有對應的虛擬鍵」，不會送出保留區的無效鍵碼。
+  const vkCode = keyChar.codePointAt(0);
+  const vk = vkCode >= 0xd800 && vkCode <= 0xdfff ? 0 : vkCode;
+
   const asciiPrintable = /[ -~]/.test(c);
   // 可列印字元（Unicode 類別非 C：排除控制、格式、代理、私人使用與未指定碼位）一律帶 text。
   // 舊版只給 ASCII 可列印字元 text，於是 keyboard.press('é')／press('😀') 只送出沒有文字的
@@ -258,7 +269,7 @@ export function keyDescriptor(name) {
     // 保留的代理區（0xD800–0xDFFF），當成 windowsVirtualKeyCode dispatch 出去是無效值，也不符
     // 本檔「非 ASCII 單字元 vk 用自身碼位」的既有契約（'é' → 'É' 的 201）。改取碼位後
     // '😀' 得到 0x1F600，BMP 字元結果完全不變（codePointAt === charCodeAt）。
-    vk: keyChar.codePointAt(0),
+    vk,
     text: legacy ? (asciiPrintable ? c : undefined) : printable ? c : undefined,
   };
 }

@@ -9,7 +9,12 @@ import { homedir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INPAGE_SRC = readFileSync(join(__dirname, 'inpage.agent.js'), 'utf8');
-const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
+// 資料根目錄沿用專案既有的覆寫約定（tools/profile-init.js 也讀 EGO_LINUX_DATA_DIR）：
+// 這裡原本硬編 homedir，隔離安裝／測試把資料根目錄指到暫存目錄時，vault 仍被寫進
+// 真實家目錄（資料目錄外洩），且無法在暫存目錄內對 vault 載入／持久化做回歸測試。
+const DATA_DIR = process.env.EGO_LINUX_DATA_DIR
+  ? process.env.EGO_LINUX_DATA_DIR
+  : join(homedir(), '.local', 'share', 'ego-linux');
 const COOKIES_VAULT_PATH = join(DATA_DIR, 'cookies-vault.json');
 const STORAGE_VAULT_PATH = join(DATA_DIR, 'storage-vault.json');
 const TABS_VAULT_PATH = join(DATA_DIR, 'session-tabs.json');
@@ -103,6 +108,45 @@ function mergeStoragePairs(prev, incoming) {
     map.delete(oldest.value);
   }
   return [...map.entries()];
+}
+
+function sanitizeStorageVault(raw) {
+  // 逐筆驗證磁碟上的 vault：只留 https origin，並重用 mergeStoragePairs() 做型別、
+  // 鍵／值長度與單一 origin 筆數上限檢查，避免損壞或超額的檔案把垃圾注入每一個
+  // https 頁面的 preload 腳本（_buildStoragePreloadScript），也讓磁碟與記憶體狀態一致。
+  //
+  // 刻意寫成模組層級純函式（而不是 BrowserHub 的方法）：vault 相關邏輯會被以
+  // 「裸物件 + 單一方法」的方式單獨呼叫（既有測試即是如此），若這裡改成 this._xxx()
+  // 會直接 TypeError，被最外層空 catch 吞掉 → 整次同步靜默不落盤。
+  const out = {};
+  for (const [rawOrigin, entry] of Object.entries(raw || {})) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    let origin = '';
+    try {
+      const parsed = new URL(String(rawOrigin));
+      if (parsed.protocol !== 'https:') continue;
+      origin = parsed.origin;
+    } catch { continue; }
+    const prev = out[origin];
+    out[origin] = {
+      updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : (prev?.updatedAt || ''),
+      ls: mergeStoragePairs(prev?.ls, entry.ls),
+      ss: mergeStoragePairs(prev?.ss, entry.ss),
+    };
+  }
+  return out;
+}
+
+function trimStorageOrigins(vault, keepOrigin) {
+  // 同樣是純函式：只依傳入的 vault 運算，不依賴 this，呼叫端可安全地在任何物件上使用。
+  if (!vault || typeof vault !== 'object' || Array.isArray(vault)) return;
+  const origins = Object.keys(vault);
+  const excess = origins.length - MAX_STORAGE_ORIGINS;
+  if (excess <= 0) return;
+  const stale = origins
+    .filter((o) => o !== keepOrigin)
+    .sort((a, b) => String(vault[a]?.updatedAt || '').localeCompare(String(vault[b]?.updatedAt || '')));
+  for (const o of stale.slice(0, excess)) delete vault[o];
 }
 
 export class EgoError extends Error {
@@ -313,7 +357,9 @@ export class BrowserHub {
         const list = Array.isArray(raw) ? raw : (raw.cookies || []);
         const now = Math.floor(Date.now() / 1000);
         for (const c of list) {
-          if (!c || !c.name || !c.domain) continue;
+          // value 不是字串的條目只會在 restoreVaultToBrowser() 被 toCookieParam() 丟掉，
+          // 但仍會留在 cookieVault 裡反覆觸發 _persistCookieVault()，載入時就該剔除。
+          if (!c || !c.name || !c.domain || typeof c.value !== 'string') continue;
           if (!c.expires || c.expires <= 0 || c.session) {
             c.expires = now + 30 * 86400;
             c.session = false;
@@ -327,8 +373,14 @@ export class BrowserHub {
     try {
       if (existsSync(STORAGE_VAULT_PATH)) {
         const raw = JSON.parse(readFileSync(STORAGE_VAULT_PATH, 'utf8'));
-        if (raw && typeof raw === 'object') {
-          this.storageVault = raw;
+        // 只接受純物件，並逐筆驗證後才採用。原本 `typeof raw === 'object'` 會放行 JSON 陣列
+        // （例如檔案被截斷成 `[]`、或由舊格式寫成陣列）：一旦 this.storageVault 是陣列，
+        // _handleStorageSync() 寫入的 origin 會變成非索引屬性，_persistStorageVault() 序列化
+        // 成 "[]" → 整批 origin 條目無聲消失，重啟後所有網站的 storage 登入態一併遺失。
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          const vault = sanitizeStorageVault(raw);
+          trimStorageOrigins(vault, null);
+          this.storageVault = vault;
         }
       }
     } catch {}
@@ -492,6 +544,11 @@ export class BrowserHub {
       if (!parsed || parsed.protocol !== 'https:') return;
       // 用 URL.origin 正規化，確保與 _injectOriginStorageIfPresent 的 new URL(url).origin 對得上，
       // 否則大小寫／結尾斜線不同的鍵會寫得進去卻永遠注入不到。
+      // 縱深防禦：任何來源讓 storageVault 變成陣列／純量時，先歸零再寫入，
+      // 否則新條目會變成非索引屬性並在持久化時整批消失。
+      if (!this.storageVault || typeof this.storageVault !== 'object' || Array.isArray(this.storageVault)) {
+        this.storageVault = {};
+      }
       const origin = parsed.origin;
       const prev = this.storageVault[origin];
       this.storageVault[origin] = {
@@ -499,14 +556,7 @@ export class BrowserHub {
         ls: mergeStoragePairs(prev?.ls, payload?.ls),
         ss: mergeStoragePairs(prev?.ss, payload?.ss),
       };
-      const origins = Object.keys(this.storageVault);
-      const excess = origins.length - MAX_STORAGE_ORIGINS;
-      if (excess > 0) {
-        const stale = origins
-          .filter((o) => o !== origin)
-          .sort((a, b) => String(this.storageVault[a]?.updatedAt || '').localeCompare(String(this.storageVault[b]?.updatedAt || '')));
-        for (const o of stale.slice(0, excess)) delete this.storageVault[o];
-      }
+      trimStorageOrigins(this.storageVault, origin);
       this._persistStorageVault();
     } catch {}
   }

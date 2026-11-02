@@ -150,7 +150,8 @@ const CORIDE_BAR_SCRIPT = `(function(){
         }
       }
       if (ls.length === 0 && ss.length === 0) return;
-      const sig = ls.length + ':' + ss.length + ':' + ls.map(x => x[0].length + ':' + x[1].length).join(',') + '|' + ss.map(x => x[0].length + ':' + x[1].length).join(',');
+      // 必須涵蓋鍵與值本身。只比長度時，同長度覆寫不會再送，vault 會留舊值並在還原時寫回。
+      const sig = JSON.stringify([ls, ss]);
       if (window.__tpLastStorageSig === sig) return;
       window.__tpLastStorageSig = sig;
       window.__tpCoRideAction(JSON.stringify({ action: 'syncStorage', origin: location.origin, ls, ss }));

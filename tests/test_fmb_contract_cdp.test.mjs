@@ -8,11 +8,9 @@
 //   2. 需要 loopback 的測試先嘗試 listen，環境不允許時 `t.skip()`，不視為失敗。
 //   3. 伺服器一律 `unref()`，socket 於 finally 逐一 destroy，確保不留下 open handle。
 //
-// 已知產品端競態（本任務不得修改原始碼，故以 XFAIL/skip 記錄，不讓它擋測試）：
-//   `Cdp#connect()` 的逾時回呼是「先 ws.close()、再 reject(timeout)」。在 Node 內建 WebSocket
-//   實作下，ws.close() 會觸發 onerror → 由 `CDP connect failed: <url>` 先讓 promise 進入 rejected，
-//   因此「握手卡住」對外可觀測到的訊息通常是 failed 而非 timeout。
-//   可穩定鎖定的契約是：connect() 必定「拒絕」（不會永遠 pending）且訊息帶完整目標 URL。
+// 曾知產品端競態（已修）：舊版 `Cdp#connect()` 逾時回呼「先 ws.close()、再 reject(timeout)」，
+//   ws.close() 觸發 onerror 讓 `CDP connect failed` 搶先。daemon/cdp.js 現已先 settle 再關 socket，
+//   下方「握手無回應應回報 timeout」測試鎖定精確訊息，防止回退。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -151,12 +149,22 @@ maybe('contract/cdp：握手無回應時 connect() 拒絕，且訊息為 "CDP co
   }
 });
 
-// XFAIL（故意 skip，不是漏測）：預期「逾時」專屬訊息，但目前被 "CDP connect failed" 搶先 reject。
-// 這是 daemon/cdp.js 的產品端問題（逾時回呼先 ws.close() 再 reject），
-// 依本任務規則不得修改既有原始碼，故保留此測試作為待修項的書面記錄。
-test('contract/cdp：[XFAIL] 握手無回應應回報 "CDP connect timeout: <url>"（目前被 failed 搶先）', { timeout: 15_000 }, async (t) => {
-  t.skip('XFAIL：預期 CDP connect timeout 訊息，目前被 CDP connect failed 搶先 reject，屬 daemon/cdp.js 待修競態');
-  return;
+// 原 XFAIL：daemon/cdp.js 的逾時回呼已改為「先 settle(timeout) 再關 socket」，
+// 握手卡住時對外訊息必須是精確的 "CDP connect timeout: <url>"，不可被 failed 搶先。
+maybe('contract/cdp：握手無回應應回報 "CDP connect timeout: <url>"', { timeout: 15_000 }, async (t) => {
+  const srv = await listenLoopback();
+  if (!srv) { t.skip('此環境無法綁定 127.0.0.1，略過 loopback 契約測試'); return; }
+  const url = `ws://127.0.0.1:${srv.port}/x`;
+  const cdp = new Cdp(url);
+  try {
+    await assert.rejects(
+      cdp.connect(300),
+      (e) => e instanceof Error && e.message === `CDP connect timeout: ${url}`,
+    );
+  } finally {
+    cdp.close();
+    await srv.close();
+  }
 });
 
 test('contract/cdp：once() 逾時錯誤格式 "<method> event timed out after <ms>"', { timeout: 10_000 }, async () => {

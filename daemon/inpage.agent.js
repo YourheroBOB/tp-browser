@@ -348,7 +348,10 @@
     if (!el) return { ok: false, error: 'stale handle' };
     let target = el;
     if (target.tagName === 'LABEL' && target.control) target = target.control;
-    el.focus && el.focus();
+    // Focus whatever will actually receive the typed text. A <label> is not focusable and
+    // focusing it does not forward focus to its control, so the daemon's subsequent key
+    // events would land on document.body and the text would never reach the input.
+    target.focus && target.focus();
     if (target.isContentEditable) {
       target.textContent = '';
       return { ok: true, editable: true };

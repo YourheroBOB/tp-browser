@@ -239,7 +239,18 @@ async function doctor() {
     console.log(`  fix: tp-start   # or: node "${daemonPath()}"`);
   }
   let chromeOk = false;
-  try { const r = await fetch(chromeVersionUrl(chromePort), { signal: AbortSignal.timeout(2500) }); const v = await r.json(); chromeOk = true; console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`); } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
+  try {
+    const r = await fetch(chromeVersionUrl(chromePort), { signal: AbortSignal.timeout(2500) });
+    // fetch 對 4xx/5xx 不會拒絕。埠上若是別的服務或錯誤頁，只要 body 能解析成 JSON，
+    // 舊寫法就印 chrome ok 並略過修復指令。非 2xx 一律視為這台 Chrome 沒有正常回應。
+    if (!r.ok) {
+      await r.text().catch(() => {});
+      throw new Error(`HTTP ${r.status}`);
+    }
+    const v = await r.json();
+    chromeOk = true;
+    console.log(`chrome  127.0.0.1:${chromePort}: ok (${v.Browser})`);
+  } catch { console.log(`chrome  127.0.0.1:${chromePort}: NOT REACHABLE`); }
   if (!chromeOk) {
     if (isWin || isMac) {
       console.log(`  fix (${isWin ? 'Windows' : 'macOS'} headless or headed agent profile):`);

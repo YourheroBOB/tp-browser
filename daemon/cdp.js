@@ -90,6 +90,28 @@ export class Cdp {
         previous.onclose = null;
         try { previous.close(); } catch {}
       }
+      // 握手還沒完成就再次 connect()（兩條路徑同時重連、daemon 在逾時前重試）時，
+      // this.ws 仍是 null，上面只處理「已經掛上的現役 socket」。舊的握手 socket
+      // 會繼續活著：晚到的 onopen 把 this.ws 搶回去，onmessage 把失效連線的事件
+      // 送進 handlers，第一個 connect() 則一直掛到自己的逾時。
+      // 作法與現役 socket 相同：先解除回呼，再以 superseded 定案，然後關掉。
+      if (this.connectSockets.size > 0 || this.connectRejects.size > 0) {
+        const staleSockets = [...this.connectSockets];
+        const staleRejects = [...this.connectRejects];
+        for (const stale of staleSockets) {
+          stale.onopen = null;
+          stale.onmessage = null;
+          stale.onerror = null;
+          stale.onclose = null;
+        }
+        const superseded = new Error(`CDP connect superseded: ${this.wsUrl}`);
+        for (const rejectConnect of staleRejects) {
+          try { rejectConnect(superseded); } catch {}
+        }
+        for (const stale of staleSockets) {
+          try { stale.close(); } catch {}
+        }
+      }
       const ws = new WebSocket(this.wsUrl);
       this.connectSockets.add(ws);
       // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。

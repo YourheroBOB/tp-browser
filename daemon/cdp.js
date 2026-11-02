@@ -30,6 +30,8 @@ export class Cdp {
     this.sessions = new Set(); // known sessionIds
     this.ws = null;
     this.closed = false;
+    // close handler 是否已通知。close() 與 onclose 都可能走到，且只能一次。
+    this.closeNotified = false;
     // connect() 握手期間建立的 socket 與其 reject 回呼：close() 可能在 WebSocket
     // onopen 之前抵達（呼叫端不等握手就收手），此時 this.ws 仍是 null，若只設
     // closed=true 會漏掉這條正在建立的連線。close() 據此主動關閉並讓 connect()
@@ -145,14 +147,7 @@ export class Cdp {
         if (this.ws !== ws && !this.closed) return;
         this.closed = true;
         this._rejectPending();
-        // 與 _recv 相同：先快照再迭代。close handler 在分派中途 off() 其他 close
-        // handler 時，直接迭代 Set 會把後者跳過（漏呼叫）；快照則保證本輪已註冊的
-        // handler 都恰好被呼叫一次，且中途註冊的不會被同一輪走訪到。
-        for (const fn of [...(this.closeHandlers ?? [])]) {
-          // 單一 close handler 丟錯不可中斷後續 handler（例如 daemon 的重新附掛邏輯），
-          // 也不可讓錯誤從事件回呼往外冒；比照 onEvent 逐個隔離並記錄。
-          try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
-        }
+        this._notifyClose();
       };
       ws.onmessage = (ev) => this._recv(ev.data);
     });
@@ -228,6 +223,19 @@ export class Cdp {
     this.pending.clear();
   }
 
+  // 恰好通知一次 close handler。現役 socket 的 onclose 與主動 close() 共用。
+  // 先立旗標再以快照迭代：handler 重入 close() 不會再走一輪；中途 off() 不會漏呼叫
+  // （直接迭代 Set 會跳過被刪掉的後續元素）；中途新增的不會在本輪被走訪到。
+  // 單一 handler 丟錯不可中斷後續 handler（daemon 重新附掛、once() 失敗路徑），
+  // 錯誤只記錄、不從事件回呼往外冒。
+  _notifyClose() {
+    if (this.closeNotified) return;
+    this.closeNotified = true;
+    for (const fn of [...(this.closeHandlers ?? [])]) {
+      try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
+    }
+  }
+
   close() {
     this.closed = true;
 
@@ -246,15 +254,16 @@ export class Cdp {
       try { ws.close(); } catch {}
     }
 
-    // 主動 close() 之後這條 client 永久不可用，回應不可能再到；收尾不可寄望在對端
-    // 的 close frame 上。真實 WebSocket 對「不回應的對端」要等關閉握手逾時才會派送
-    // onclose（TCP 半開、對端程序已死、握手卡住都是常見情境），期間等待中的請求會
-    // 一直懸置，計時器也把事件迴圈多撐住最多 timeout 毫秒；timeout 為 Infinity 的
-    // 請求更永遠不會 settle。先收掉 pending 再關 socket，讓後續任何 close handler
-    // 觀察到的都是已清空的狀態。
+    // 主動 close() 之後這條 client 永久不可用。真實 WebSocket 對不回應的對端要等
+    // 關閉握手逾時才派送 onclose（TCP 半開、對端程序已死、握手卡住）。send 的
+    // pending、once() 與 onClose 若繼續等那個事件，會停到各自的 timeout；
+    // timeout 為 Infinity 時永遠不會 settle。先拒絕 pending、再關 socket，
+    // 最後通知 close handler，因此 handler 看到的 pending 已是空的。
+    // _notifyClose 冪等：ws.close() 若已同步走進 onclose 並通知過，這裡不會再呼叫。
     this._rejectPending();
 
     try { this.ws?.close(); } catch {}
+    this._notifyClose();
   }
 }
 

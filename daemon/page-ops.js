@@ -617,7 +617,10 @@ export class BrowserHub {
     try {
       if (curUrl.startsWith('http')) {
         const origin = new URL(curUrl).origin;
-        await this.cdp.send('Storage.clearDataForOrigin', { origin, storageTypes: 'local_storage,session_storage,indexeddb' }, { sessionId: st.sessionId }).catch(() => {});
+        // session_storage 不是 CDP StorageType。未知類型會讓整次 clearDataForOrigin
+        // 以 InvalidParams 失敗（被空 catch 吞掉），local_storage 與 indexeddb 也一起沒清掉。
+        await this.cdp.send('Storage.clearDataForOrigin', { origin, storageTypes: 'local_storage,indexeddb' }, { sessionId: st.sessionId }).catch(() => {});
+        await this.cdp.send('Runtime.evaluate', { expression: 'try{sessionStorage.clear()}catch(e){}' }, { sessionId: st.sessionId }).catch(() => {});
       }
     } catch {}
     let nextUrl = curUrl;

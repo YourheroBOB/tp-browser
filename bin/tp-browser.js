@@ -130,6 +130,32 @@ async function ensureRunning() {
   return { port, h };
 }
 
+// CLI 已知的子命令與相容別名。集中在一處，避免 main() 的 if 鏈與「未知命令」判定
+// 各自維護而漂移（新增命令卻忘了登記，使用者就會被誤報 unknown command）。
+const KNOWN_COMMANDS = new Set([
+  'start', '--start',
+  'headed', '--headed', '-Headed',
+  'restart', '--restart',
+  'stop', '--stop',
+  'nodejs',
+  'status', 'spaces',
+  'doctor', 'skill',
+  'version', '--version',
+  'help', '--help', '-h',
+]);
+
+// 未知子命令的判定抽成純函式（與 nodeJsArgsError 同一個理由）：不印訊息、不碰網路、
+// 不 process.exit，所以測試能逐條驗證「每個合法別名都不會被誤擋，打錯字才回錯誤」，
+// 不必為每一種輸入各開一個子程序。
+export function unknownCommandError(sub) {
+  if (typeof sub !== 'string' || sub === '') return null;
+  if (KNOWN_COMMANDS.has(sub)) return null;
+  return [
+    `tp-browser: unknown command: ${sub}`,
+    "tp-browser: run 'tp-browser help' for the command list.",
+  ];
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0] || 'help';
@@ -157,7 +183,26 @@ async function main() {
     else console.log('See https://github.com/YourheroBOB/tp-browser/blob/main/skills/tp-browser/SKILL.md');
     return;
   }
-  if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
+  if (sub === 'version' || sub === '--version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
+  // 「完全不帶參數」（sub 預設為 'help'）與 help／--help／-h 都是真的成功路徑，必須維持 exit 0。
+  if (sub === 'help' || sub === '--help' || sub === '-h') { printUsage(); return; }
+  // 未知子命令：舊寫法印完 usage 就 exit 0，`tp-browser strat`（打錯字）或 `tp-browser statsu`
+  // 會讓自動化流程誤判「指令已成功執行」——與本檔 nodejs 參數驗證修掉的是同一個病灶。
+  // 改為在 stderr 明講並以 exit 2 收場，與 `nodejs` 參數錯誤（exit 2）、`status` 連不上 daemon
+  // （exit 2）的既有慣例一致；同時仍把完整 usage 印到 stdout，互動使用者一眼就看到正確指令。
+  const unknown = unknownCommandError(sub);
+  if (unknown) {
+    for (const line of unknown) console.error(line);
+    printUsage();
+    process.exitCode = 2;
+    return;
+  }
+  // 每個已知命令都會在上面各自的分支返回；走到這裡只是保險（例如未來新增別名卻還沒實作），
+  // 維持舊行為：印出 usage、exit 0。
+  printUsage();
+}
+
+function printUsage() {
   console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
   tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc (auto-starts if needed)

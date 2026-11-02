@@ -316,6 +316,28 @@ function validateNodeJsArgs(args) {
   process.exit(2);
 }
 
+// `-e ''` 的空腳本已經被 nodeJsArgsError() 擋掉，但 stdin／heredoc 這條路徑有
+// 「完全相同」的失敗模式：`tp-browser nodejs < /dev/null`、空 heredoc，或
+// `some_cmd | tp-browser nodejs` 而 some_cmd 什麼都沒輸出時，讀到的就是空字串。
+// 舊寫法會照樣執行空腳本並回 exit 0，呼叫端因此誤判「任務已執行」；
+// 更糟的是過程中 ensureRunning() 已經先把 daemon／瀏覽器啟動器拉起來，白白開了一個瀏覽器。
+// 判定抽成純函式：不印訊息、不 process.exit、不碰網路，測試可直接 import 逐條驗證。
+export function emptyStdinScriptError(code) {
+  if (typeof code !== 'string') return null;
+  if (code.replace(/^\uFEFF/, '').trim() !== '') return null;
+  return [
+    'tp-browser nodejs: stdin/heredoc script is empty (only BOM/whitespace); nothing was executed.',
+    "tp-browser nodejs: pass real code, e.g. tp-browser nodejs -e 'console.log(1)'  |  tp-browser nodejs < script.js",
+  ];
+}
+
+function validateStdinScript(code) {
+  const lines = emptyStdinScriptError(code);
+  if (!lines) return;
+  for (const line of lines) console.error(line);
+  process.exit(2);
+}
+
 async function runNodeJs(args) {
   validateNodeJsArgs(args);
   let code = null;
@@ -334,6 +356,12 @@ async function runNodeJs(args) {
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
+  // 必須在 ensureRunning() 之前判斷：空腳本不該把 daemon／瀏覽器啟動器拉起來。
+  // 但只套用在「完全沒有位置參數」的形式（`tp-browser nodejs < script.js`）：
+  // `tp-browser nodejs script.js` 是歷史相容形式（位置參數被忽略、一律從 stdin 讀），
+  // 其既有行為已被 tests/fmb_w11_s02_cli_nodejs_args 的回歸護欄鎖定，
+  // 本次不擴大影響面去改它，避免同一個 PR 內兩種行為同時變動。
+  if (args.length === 0) validateStdinScript(code);
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {

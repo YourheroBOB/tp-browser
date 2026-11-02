@@ -149,6 +149,21 @@ if (-not $Restart) {
     } catch {}
 }
 
+# 3b. Preflight: discover the Node.js binary BEFORE the flush / Stop-Process sweep below.
+#     node.exe is required to run ego-browserd.js, so a missing node must fail here instead of
+#     after the running daemon and browser were already killed (the live profile is only touched
+#     once we know the replacement stack can actually be started).
+$NodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
+if (-not $NodeBin) {
+    foreach ($nc in @("C:\Program Files\nodejs\node.exe", "$env:LOCALAPPDATA\Programs\nodejs\node.exe")) {
+        if (Test-Path $nc) { $NodeBin = $nc; break }
+    }
+}
+if (-not $NodeBin) {
+    [Console]::Error.WriteLine("ERROR: node.exe not found!")
+    exit 1
+}
+
 # 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes.
 #    The Stop-Process sweep below terminates EVERY ego daemon, including a stale one still
 #    sitting on the other port pair (9772 vs 9774). Flushing only the port we are about to
@@ -196,18 +211,7 @@ if ($Remaining.Count -gt 0) {
     if (Test-Path $lockPath) { Remove-Item -Force $lockPath -ErrorAction SilentlyContinue }
 }
 
-# 5. Discover Node.js binary & initialize profile (Bookmarks Bar + Favicons)
-$NodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
-if (-not $NodeBin) {
-    foreach ($nc in @("C:\Program Files\nodejs\node.exe", "$env:LOCALAPPDATA\Programs\nodejs\node.exe")) {
-        if (Test-Path $nc) { $NodeBin = $nc; break }
-    }
-}
-if (-not $NodeBin) {
-    [Console]::Error.WriteLine("ERROR: node.exe not found!")
-    exit 1
-}
-
+# 5. Initialize profile (Bookmarks Bar + Favicons)
 $ProfileInitJs = Join-Path $DataDir "tools\profile-init.js"
 if (-not (Test-Path $ProfileInitJs)) {
     $ProfileInitJs = Join-Path (Split-Path $PSScriptRoot -Parent) "tools\profile-init.js"

@@ -124,6 +124,7 @@ function chromeVersionUrl(chromePort) {
 async function health(port) {
   try {
     const r = await fetch(`${daemonBase(port)}/health`, { signal: AbortSignal.timeout(2500) });
+    if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
 }

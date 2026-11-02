@@ -46,12 +46,16 @@ function countBookmarks(file) {
   if (!existsSync(file)) return 0;
   try {
     const j = JSON.parse(readFileSync(file, 'utf8'));
-    const b1 = (j.roots?.bookmark_bar?.children || []).length;
-    const b2 = (j.roots?.other?.children || []).length;
+    // `children` must be an array: a corrupt file can hold a string (whose
+    // `.length` would fake bookmarks) or a scalar (whose `.length` is
+    // `undefined` and turns the score into NaN, defeating the `n <= 0` skip).
+    const kids = (node) => (Array.isArray(node?.children) ? node.children.length : 0);
+    const b1 = kids(j.roots?.bookmark_bar);
+    const b2 = kids(j.roots?.other);
     // Chrome's third root is `synced` (older files still use `mobile`).
     // Omitting it makes a phone-synced profile score 0 and skips the import.
     const third = j.roots?.synced ?? j.roots?.mobile;
-    const b3 = (third?.children || []).length;
+    const b3 = kids(third);
     return b1 + b2 + b3;
   } catch { return 0; }
 }

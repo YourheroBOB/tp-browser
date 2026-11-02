@@ -186,7 +186,17 @@ function broadcastPush(targetId, kind, payload) {
     if (hub) hub.resetSiteAuth(targetId).catch(() => {});
   }
   if (kind === 'coride' && payload?.mode) {
-    const found = store.findByTargetId(targetId);
+    // Store 沒有 findByTargetId；依各 space 分頁的 targetId 找出所屬空間。
+    let found = null;
+    for (const space of store.list()) {
+      for (const pg of Object.values(space.pages)) {
+        if (pg?.targetId === targetId) {
+          found = { space };
+          break;
+        }
+      }
+      if (found) break;
+    }
     if (found) {
       found.space.ownership = payload.mode === 'human' ? 'user' : 'agent';
       found.space.state = payload.mode === 'human' ? 'handed-off' : 'active';

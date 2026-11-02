@@ -226,7 +226,12 @@
         if (!String(spec.value || '').trim()) return { els: [], spec, error: 'invalid selector' };
         els = Array.from(document.querySelectorAll('a[href]')).filter((el) => {
           const h = el.getAttribute('href') || '';
-          return (el.href || '').includes(spec.value) || h.includes(spec.value);
+          // HTMLAnchorElement.href is a string (absolute URL). An SVG <a> exposes
+          // href as an SVGAnimatedString; calling .includes on it throws and aborts
+          // every loc=href: query on the page, including ordinary HTML links.
+          // The attribute string still matches those SVG anchors.
+          const abs = typeof el.href === 'string' ? el.href : '';
+          return abs.includes(spec.value) || h.includes(spec.value);
         });
         break;
       }

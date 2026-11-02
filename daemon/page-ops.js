@@ -1096,7 +1096,22 @@ export class BrowserHub {
 
   // ---- raw mouse ops ----
   async rawMouse(targetId, op, args, opts = {}) {
-    if (op === 'click') return this.click(targetId, null, opts, args);
+    if (op === 'click') {
+      const [x, y] = args;
+      const button = opts.button || 'left';
+      const clickCount = opts.clickCount ?? 1;
+      const delay = opts.delay || 0;
+      for (let i = 0; i < clickCount; i++) {
+        const n = i + 1;
+        await this.mouseInput(targetId, 'mouseMoved', x, y, { button });
+        await this.mouseInput(targetId, 'mousePressed', x, y, { button, clickCount: n });
+        if (delay) await sleep(delay);
+        await this.mouseInput(targetId, 'mouseReleased', x, y, { button, clickCount: n });
+        if (i + 1 < clickCount) await sleep(40);
+      }
+      this._pos = { x, y };
+      return {};
+    }
     const st = this.sessionOf(targetId);
     const [x, y] = args;
     if (op === 'move') {

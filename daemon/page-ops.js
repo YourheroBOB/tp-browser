@@ -2,7 +2,7 @@
 // All actions map to the ego-browser Page API surface (see references/api.md).
 import { once } from './cdp.js';
 import { parseChord, keyDescriptor, modifierBit } from './keys.js';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -24,7 +24,11 @@ function toCookieParam(c) {
   const isHostPrefix = String(c.name).startsWith('__Host-');
   const isSecurePrefix = String(c.name).startsWith('__Secure-');
   const secure = Boolean(c.secure || isHostPrefix || isSecurePrefix || c.sameSite === 'None');
-  const path = isHostPrefix ? '/' : (c.path || '/');
+  // vault 是磁碟上的 JSON（可被人工編輯或其他工具改寫），path 不保證是絕對路徑。
+  // 舊版把 path 直接字串串接到 host 後方：path='foo' 會組出 'https://example.comfoo'，
+  // 於是 cookie 被種到一個不存在的網域，真正要還原登入態的網站永遠拿不到。
+  // 非絕對路徑（含空字串、非字串、'foo'）一律退回合規的 '/'。
+  const path = (isHostPrefix || typeof c.path !== 'string' || !c.path.startsWith('/')) ? '/' : c.path;
   const url = (secure ? 'https://' : 'http://') + host + path;
   const now = Math.floor(Date.now() / 1000);
   const expires = (!c.expires || c.expires <= 0 || c.session) ? (now + 30 * 86400) : c.expires;
@@ -325,8 +329,19 @@ export class BrowserHub {
     } catch {}
   }
 
+  _ensureDataDir() {
+    // 使用者清掉 ~/.local/share/ego-linux（或直接從 repo 跑 daemon、尚未執行安裝器）時，
+    // DATA_DIR 並不存在；writeFileSync 會丟 ENOENT，被下面的空 catch 吞掉。
+    // 結果是 cookie／storage vault 永遠不會落地、也永遠不會有任何錯誤訊息，
+    // 重啟後登入態全失——與「Cookie 100% 本機自持」的宣稱直接衝突。建立目錄是冪等的。
+    try {
+      mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+    } catch {}
+  }
+
   _persistCookieVault() {
     try {
+      this._ensureDataDir();
       const cookies = [...this.cookieVault.values()];
       writeFileSync(COOKIES_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), cookies }), { mode: 0o600 });
     } catch {}
@@ -334,6 +349,7 @@ export class BrowserHub {
 
   _persistStorageVault() {
     try {
+      this._ensureDataDir();
       writeFileSync(STORAGE_VAULT_PATH, JSON.stringify(this.storageVault), { mode: 0o600 });
     } catch {}
   }
@@ -458,9 +474,18 @@ export class BrowserHub {
           openUrls.push({ url: u, title: st.title || '' });
         }
       }
+    } catch {} finally {
+      this._syncingVault = false;
+    }
+=======
       if (openUrls.length > 0) {
+        this._ensureDataDir();
         writeFileSync(TABS_VAULT_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tabs: openUrls.slice(0, 8) }), { mode: 0o600 });
       }
+    } catch {} finally {
+      this._syncingVault = false;
+    }
+=======
     } catch {} finally {
       this._syncingVault = false;
     }

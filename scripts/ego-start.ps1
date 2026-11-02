@@ -214,6 +214,16 @@ for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
         Stop-Process -Id $Proc.ProcessId -Force -ErrorAction SilentlyContinue
     }
 }
+# The snapshot above is captured BEFORE the last forced termination, and terminating is
+# asynchronous, so it can still list a browser that was only just asked to exit. Judging
+# the failure from that stale list reported EGO_NOT_READY for a start that had in fact
+# stopped everything (ego-stop.ps1 had the same bug and re-checks for the same reason).
+# Re-query the real state after a short, bounded grace period before deciding anything.
+for ($Verify = 0; $Verify -lt 4; $Verify++) {
+    Start-Sleep -Milliseconds 250
+    $Remaining = @(Get-EgoProcesses)
+    if ($Remaining.Count -eq 0) { break }
+}
 if ($Remaining.Count -gt 0) {
     Write-Output "EGO_NOT_READY (profile still in use)"
     exit 1

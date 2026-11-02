@@ -1,6 +1,6 @@
 // Task-space ledger, persisted as JSON. Survives daemon restarts; targets are
 // re-attached by targetId and dropped when the browser no longer knows them.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // 舊版、手動編輯或半寫入的 ledger 可能沒有 nextSpaceId，或它的值落後於既有 space id。
@@ -14,7 +14,24 @@ import { dirname } from 'node:path';
 // 純量會直接拋錯，為陣列則寫出畸形資料。因此載入後一併把 labelSeq 正規化成一般物件。
 // 註：刻意不新增 Store 的 prototype 方法，避免破壞 Store.prototype 的公開介面契約。
 function normalizeLedger(data) {
-  if (data === null || typeof data !== 'object') return;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return;
+  // spaces 缺欄、null、陣列或純量時，list／get／create 會在 Object.hasOwn 或
+  // 賦值當下丟 TypeError：ledger 載入得了，daemon 卻無法列出或再開空間。
+  // 不是一般物件的項目無法當空間用，留著只會讓 list() 把 null 交出去。
+  const spacesIn = data.spaces;
+  if (spacesIn === null || typeof spacesIn !== 'object' || Array.isArray(spacesIn)) {
+    data.spaces = {};
+  } else {
+    for (const key of Object.keys(spacesIn)) {
+      const space = spacesIn[key];
+      if (space === null || typeof space !== 'object' || Array.isArray(space)) {
+        delete spacesIn[key];
+        continue;
+      }
+      const pages = space.pages;
+      if (pages === null || typeof pages !== 'object' || Array.isArray(pages)) space.pages = {};
+    }
+  }
   const spaces = data.spaces;
   const ids = spaces !== null && typeof spaces === 'object' && !Array.isArray(spaces)
     ? Object.keys(spaces).map((key) => Number(key)).filter((n) => Number.isInteger(n) && n > 0)
@@ -71,7 +88,9 @@ export class Store {
       // 安靜放棄、照舊降級。
       try {
         if (existsSync(this.file) && statSync(this.file).isFile()) {
-          copyFileSync(this.file, `${this.file}.corrupt-${Date.now()}`);
+          const backup = `${this.file}.corrupt-${Date.now()}`;
+          copyFileSync(this.file, backup);
+          try { chmodSync(backup, 0o600); } catch { /* 備份權限鎖不上時仍保留檔案 */ }
         }
       } catch { /* 備份失敗不阻擋降級為空 ledger */ }
       console.error('[ego-browserd] store load failed, starting fresh:', e.message);
@@ -83,12 +102,16 @@ export class Store {
     const body = JSON.stringify(this.data, null, 1);
     try {
       writeFileSync(tmp, body);
+      // ledger 含分頁 URL 與標題。umask 022 時預設檔案會讓同機其他使用者可讀。
+      // 與 token、cookies 一樣鎖成僅擁有者可讀寫；檔案系統不支援時不阻擋換名。
+      try { chmodSync(tmp, 0o600); } catch { /* best-effort */ }
       renameSync(tmp, this.file);
     } catch {
       try {
         // rename 可能因 Windows 防毒／索引器鎖檔（EPERM）、跨裝置（EXDEV）
         // 或目標型別不符（EISDIR）而失敗：退回直接覆寫正本，資料仍會落地。
         writeFileSync(this.file, body);
+        try { chmodSync(this.file, 0o600); } catch { /* best-effort */ }
       } finally {
         // 不論直接寫入成功或失敗（例外照樣往外丟），都不能把
         // `${file}.${pid}.tmp` 留在磁碟上。
@@ -96,11 +119,21 @@ export class Store {
       }
     }
   }
-  list() { return Object.values(this.data.spaces); }
+  list() {
+    const spaces = this.data && this.data.spaces;
+    if (spaces === null || typeof spaces !== 'object' || Array.isArray(spaces)) return [];
+    return Object.values(spaces);
+  }
   // 只認 `spaces` 的自有鍵：`spaces['__proto__']`／`spaces['constructor']` 會回傳原型上的
   // 東西（分別是 Object.prototype 與 Object 函式），若不擋就會被當成「存在的空間」。
-  get(id) { return Object.hasOwn(this.data.spaces, id) ? (this.data.spaces[id] ?? null) : null; }
+  // spaces 缺欄或不是一般物件時回 null，而不是讓 Object.hasOwn 丟 TypeError。
+  get(id) {
+    const spaces = this.data && this.data.spaces;
+    if (spaces === null || typeof spaces !== 'object' || Array.isArray(spaces)) return null;
+    return Object.hasOwn(spaces, id) ? (spaces[id] ?? null) : null;
+  }
   create({ name, profileId = 'agent' }) {
+    normalizeLedger(this.data);
     const id = this.data.nextSpaceId++;
     this.data.spaces[id] = {
       id, name, profileId, ownership: 'agent', state: 'active',
@@ -115,6 +148,12 @@ export class Store {
   nextLabel(spaceId) {
     const s = this.get(spaceId);
     if (!s) return 'p?';
+    // spaceId 來自 ledger 的鍵。seq['__proto__'] = n 會呼叫 Object.prototype 的
+    // setter，污染全域原型，而不是在 labelSeq 上建立自有鍵。
+    const seqKey = String(spaceId);
+    if (seqKey === '__proto__' || seqKey === 'constructor' || seqKey === 'prototype') {
+      throw new Error(`invalid space id ${seqKey}`);
+    }
     // labelSeq 也只認自有鍵：繼承鍵（例如 'toString'）會讀到函式並寫出一筆孤兒序號，
     // 讓 ledger 只增不減。舊版／手編 ledger 也可能整塊缺少 labelSeq，此時補一個空
     // 物件，而不是讓 nextLabel 拋 TypeError。
@@ -135,12 +174,23 @@ export class Store {
   }
   setPage(spaceId, label, patch) {
     const s = this.get(spaceId);
+    // pages 不是一般物件時，Object.hasOwn 會直接丟 TypeError。
+    if (!s || s.pages === null || typeof s.pages !== 'object' || Array.isArray(s.pages)) return;
     // 只認 `pages` 的自有鍵：`s.pages['__proto__']` 是 Object.prototype（truthy、非自有），
     // 若照舊 Object.assign 下去就是全域原型污染。
-    if (!s || !Object.hasOwn(s.pages, label)) return;
+    if (!Object.hasOwn(s.pages, label)) return;
     const page = s.pages[label];
-    if (!page) return;
-    Object.assign(page, patch);
+    if (!page || typeof page !== 'object') return;
+    // JSON.parse('{"__proto__":...}') 會產生自有鍵 __proto__。Object.assign 會呼叫
+    // Object.prototype 的 setter，污染全域原型。只複製一般自有鍵。
+    if (patch !== null && typeof patch === 'object' && !Array.isArray(patch)) {
+      for (const key of Object.keys(patch)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        page[key] = patch[key];
+      }
+    } else {
+      Object.assign(page, patch);
+    }
     this.persist();
   }
   bindPage(spaceId, label, targetId, openedBy = 'agent') {
@@ -161,7 +211,8 @@ export class Store {
   }
   removePage(spaceId, label) {
     const s = this.get(spaceId);
-    if (!s) return;
+    // pages 不是一般物件時 Object.hasOwn 會丟 TypeError，刪分頁不該弄垮 daemon。
+    if (!s || s.pages === null || typeof s.pages !== 'object' || Array.isArray(s.pages)) return;
     // 非自有鍵一律視為不存在（避免把 Object.prototype 上的同名成員當成分頁）。
     if (!Object.hasOwn(s.pages, label)) return;
     const page = s.pages[label];
@@ -172,10 +223,16 @@ export class Store {
     this.persist();
   }
   deleteSpace(id) {
-    delete this.data.spaces[id];
+    // spaces 若是 null 或缺欄，直接 delete 會丟 TypeError。
+    if (this.data.spaces !== null && typeof this.data.spaces === 'object') {
+      delete this.data.spaces[id];
+    }
     // labelSeq 是「每個空間各自」的標籤計數器，空間刪掉後必須一起清掉；
     // 否則 ledger 只增不減（回收器每次回收都留下一筆孤兒 labelSeq[id]）。
-    if (this.data.labelSeq) delete this.data.labelSeq[id];
+    // 陣列或純量沒有「每個空間一筆」的語意，delete 還可能丟 TypeError。
+    if (this.data.labelSeq && typeof this.data.labelSeq === 'object' && !Array.isArray(this.data.labelSeq)) {
+      delete this.data.labelSeq[id];
+    }
     this.persist();
   }
 }

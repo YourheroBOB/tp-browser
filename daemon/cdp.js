@@ -161,6 +161,9 @@ export class Cdp {
   _recv(raw) {
     let msg;
     try { msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString()); } catch { return; }
+    // JSON.parse('null')、數字或字串會得到非物件。直接讀 msg.id 會丟 TypeError，
+    // 從 WebSocket onmessage 往外冒。CDP 訊息一定是物件；其餘幀直接忽略。
+    if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
       if (!p) return;

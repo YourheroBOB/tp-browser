@@ -208,8 +208,10 @@ export function keyDescriptor(name) {
     if (isLegacyUnsupportedFKeyCall(name)) return null;
     // macOS（darwin）上 ControlOrMeta 是 Meta（Command）鍵：描述子隨之改成 Meta，
     // 與 modifierBit 的平台判斷一致，避免 dispatch 出 Ctrl+A 而非 Cmd+A。
-    if (name === 'ControlOrMeta' && process.platform === 'darwin') return NAMED.Meta;
-    return NAMED[name];
+    // 回傳表格內的同一顆物件時，呼叫端改 desc.text／desc.vk 會污染後續所有按鍵。
+    // 單字元分支本來就回新物件；具名鍵也回淺拷貝，表格保持不變。
+    if (name === 'ControlOrMeta' && process.platform === 'darwin') return { ...NAMED.Meta };
+    return { ...NAMED[name] };
   }
   // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；
   // 舊版用 name.length === 1 會把整個 emoji 判成未知鍵（所以 parseChord('😀') 拋 unknown key）。

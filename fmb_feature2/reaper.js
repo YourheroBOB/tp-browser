@@ -37,7 +37,13 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 function resolvePolicy(policy) {
   const out = { ...DEFAULT_POLICY };
   if (isPlainObject(policy)) {
-    for (const [k, v] of Object.entries(policy)) if (v !== undefined) out[k] = v;
+    for (const [k, v] of Object.entries(policy)) {
+      if (v === undefined) continue;
+      // JSON.parse 會把 "__proto__" 留成自有鍵。out[k] = v 會呼叫
+      // Object.prototype 的 setter，污染全域原型。這些鍵也不是政策欄位。
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      out[k] = v;
+    }
   }
   return out;
 }
@@ -178,8 +184,10 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
   }
 
   // 上限：只犧牲「非存活、非受保護」的空間，由最舊的開始；永不為滿足上限而關閉存活空間。
+  // null／undefined 表示不設上限（見 DEFAULT_POLICY）。Number(null) === 0，若直接
+  // Number() 再判斷，明示傳 null 會被當成「最多留 0 個」而關掉所有非存活空間。
   let overCap = 0;
-  const maxSpaces = Number(p.maxSpaces);
+  const maxSpaces = p.maxSpaces == null ? Number.NaN : Number(p.maxSpaces);
   if (Number.isFinite(maxSpaces) && maxSpaces >= 0) {
     const remaining = ordered.filter((s) => !closed.has(String(s.id)));
     const overflow = remaining.length - maxSpaces;

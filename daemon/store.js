@@ -19,13 +19,26 @@ function normalizeLedger(data) {
   const ids = spaces !== null && typeof spaces === 'object' && !Array.isArray(spaces)
     ? Object.keys(spaces).map((key) => Number(key)).filter((n) => Number.isInteger(n) && n > 0)
     : [];
-  const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+  // 逐一比較（reduce）而不是 Math.max(...ids)：spaces 的鍵數很大時，展開運算子會撞上
+  // 引擎的參數上限並拋 RangeError，讓一份完全合法的 ledger 在 load() 被誤判成損毀
+  // （降級成空 ledger，還留下無謂的 .corrupt- 備份）。reduce 沒有這個上限，對一般大小的
+  // ledger 行為完全相同（ids 只含正整數）。
+  const maxId = ids.reduce((max, n) => (n > max ? n : max), 0);
   const current = data.nextSpaceId;
   if (!Number.isInteger(current) || current < 1 || current <= maxId) data.nextSpaceId = maxId + 1;
 
   // labelSeq 只補成一般物件；各空間的序號內容交給 nextLabel 的既有邏輯維護。
   const seq = data.labelSeq;
   if (seq === null || typeof seq !== 'object' || Array.isArray(seq)) data.labelSeq = {};
+}
+
+// Windows 的記事本／PowerShell 等工具存 UTF-8 時常自動加上 BOM（U+FEFF），但 JSON.parse
+// 不接受前置 BOM，會直接拋錯：一份「內容完全合法、只是被手動編輯過」的 ledger 因此被當成
+// 損毀檔，連備份一起降級成空 ledger（daemon 視角下所有 TaskSpace 瞬間消失）。
+// 這裡只剝掉開頭那一個 U+FEFF，其餘位元組不動；沒有 BOM 的檔案行為完全不變。
+// 註：同樣刻意不新增 Store 的 prototype 方法，維持 Store.prototype 的公開介面契約。
+function stripBom(text) {
+  return typeof text === 'string' && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 // `__proto__` 是 Object.prototype 上的存取器：`obj['__proto__'] = page` 不會建立自有鍵，
@@ -52,7 +65,7 @@ export class Store {
   load() {
     try {
       if (!existsSync(this.file)) return;
-      const parsed = JSON.parse(readFileSync(this.file, 'utf8'));
+      const parsed = JSON.parse(stripBom(readFileSync(this.file, 'utf8')));
       // 根節點不是物件（null／陣列／純量）時無法當 ledger 用；視為損壞檔並降級，
       // 而不是把 null 或 [] 塞進 this.data 讓後續每個方法都炸 TypeError。
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -61,6 +74,12 @@ export class Store {
       this.data = parsed;
       normalizeLedger(this.data);
     } catch (e) {
+      // 明確降級成空 ledger。load() 是公開方法（Store.prototype 之一），可能在成功載入後
+      // 被再次呼叫；此時 this.data 已經不是建構子的預設值，若不在此重設，失敗後會留下先前
+      // 的（或正規化到一半的）ledger，與下面「starting fresh」的日誌和降級契約相反，
+      // 後續 create() 也可能因為 nextSpaceId 未經正規化而算出 NaN id。
+      // 建構子路徑重設為同值，對既有行為無影響。
+      this.data = { nextSpaceId: 1, labelSeq: {}, spaces: {} };
       // 降級成空 ledger 之前，先把無法解析或根節點不合法的原檔原樣複製成
       // `${file}.corrupt-<timestamp>`：否則下一個 persist() 會把原檔直接覆寫成空 ledger，
       // 原本還能手動救回的 space／page／targetId 就永久消失，且不留任何痕跡。

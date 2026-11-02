@@ -43,7 +43,16 @@ function safePath(p, { mustExist = false } = {}) {
 // Nothing environment-derived ever reaches a filesystem write or a fetch URL.
 const DATA_DIR = join(homedir(), '.local', 'share', 'ego-linux');
 const ALT_PORT = process.argv.includes('--alt-port') || process.env.EGO_BROWSERD_PORT === '9774';
-const PORT = ALT_PORT ? 9774 : 9772;
+// EGO_BROWSERD_PORT used to be honoured for exactly one value ("9774"): every
+// other value was dropped silently and the daemon still bound 9772, so a caller
+// that asked for another loopback port ended up talking to a daemon it never
+// requested (two callers asking for different ports both landed on 9772).
+// Any valid port is honoured now. Anything that is not a plain port number keeps
+// the historical silent fallback — no extra output, no startup failure.
+const PORT_RAW = process.env.EGO_BROWSERD_PORT || '';
+const PORT = /^\d{1,5}$/.test(PORT_RAW) && Number(PORT_RAW) >= 1 && Number(PORT_RAW) <= 65535
+  ? Number(PORT_RAW)
+  : (ALT_PORT ? 9774 : 9772);
 // Chromium attach target is a fixed loopback constant (no env/config input).
 const CHROME_DEBUG_PORT = ALT_PORT ? 9775 : 9773;
 const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'http://127.0.0.1:9773/json/version';

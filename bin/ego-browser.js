@@ -68,7 +68,14 @@ function runLauncher(mode = 'start', extraArgs = [], quietStdout = false) {
     const shArgs = [script];
     if (mode === 'headed') shArgs.push('--headed');
     if (mode === 'restart') shArgs.push('--restart');
-    shArgs.push(...extraArgs);
+    // 與上方 win32 同一組別名。tp-start.sh／tp-headed.sh 只認 --headed／--alt-port；
+    // 原樣轉交會讓 `start headed`、`-Headed`、`-AltPort` 靜默失效。
+    for (const a of extraArgs) {
+      if (a === '--headed' || a === '-Headed' || a === 'headed') shArgs.push('--headed');
+      else if (a === '--restart' || a === '-Restart' || a === 'restart') shArgs.push('--restart');
+      else if (a === '--alt-port' || a === '-AltPort') shArgs.push('--alt-port');
+      else shArgs.push(a);
+    }
     const r = spawnSync('/bin/sh', shArgs, { stdio });
     return launcherExitCode(r, script);
   }

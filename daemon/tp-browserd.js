@@ -82,19 +82,30 @@ async function attachChrome() {
           realTabs.push({ tid, st });
         }
       }
+      const boundTarget = (tid) => {
+        for (const sp of store.list()) {
+          const pages = sp && sp.pages ? sp.pages : {};
+          for (const pg of Object.values(pages)) {
+            if (pg && pg.targetId === tid) return true;
+          }
+        }
+        return false;
+      };
       if (realTabs.length > 0) {
         for (const b of blankTabs) {
+          if (boundTarget(b.tid)) continue;
           try { await hub.cdp.send('Target.closeTarget', { targetId: b.tid }); } catch {}
         }
         for (const r of realTabs) {
           hub._ensureCoRideBar(r.st, true);
         }
       } else if (blankTabs.length > 0) {
-        const keep = blankTabs[0];
+        const keep = blankTabs.find((b) => !boundTarget(b.tid)) || blankTabs[0];
         try {
           await hub.cdp.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/newtab` }, { sessionId: keep.st.sessionId });
         } catch {}
-        for (const b of blankTabs.slice(1)) {
+        for (const b of blankTabs) {
+          if (b === keep || boundTarget(b.tid)) continue;
           try { await hub.cdp.send('Target.closeTarget', { targetId: b.tid }); } catch {}
         }
       }

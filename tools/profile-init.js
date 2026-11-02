@@ -283,6 +283,16 @@ if (bestCandidate) {
     }
   }
 
+  // Replacing Local State's os_crypt is only safe while every encrypted database in profile-agent
+  // is replaced together with it. When the two keys differ, the Login Data loop above deliberately
+  // keeps profile-agent's own Login Data / Web Data (they are encrypted with the *destination*
+  // key), so swapping the key here would leave those kept rows undecryptable — silent loss of the
+  // saved logins that were deliberately preserved. Track that case and refuse the Cookies + key
+  // swap instead of trading one import for data loss.
+  const keptLoginDbs = ['Login Data', 'Login Data For Account', 'Web Data']
+    .filter((dbName) => fileSize(join(profileDef, dbName)) > 0);
+  const keySwapOrphansKeptDbs = loginKeysConflict && keptLoginDbs.length > 0;
+
   // Sync Local State os_crypt & initial Cookies DB when profile-agent Cookies is empty/tiny.
   // The source key is read and validated *before* any file is replaced: copying Cookies first
   // and failing to write os_crypt leaves cookies encrypted with a key the destination does not
@@ -315,6 +325,8 @@ if (bestCandidate) {
     const srcOsCrypt = readSourceOsCrypt(srcLocalStatePath);
     if (!srcOsCrypt) {
       console.log('Skipped Cookies sync: source Local State has no usable os_crypt');
+    } else if (keySwapOrphansKeptDbs) {
+      console.log(`Skipped Cookies sync: profile-agent keeps ${keptLoginDbs.join(', ')} under a different os_crypt.encrypted_key`);
     } else {
       // Stage both files next to the destination, then swap them in an order that can be rolled
       // back. Local State (the decryption key) is replaced first and restored from the snapshot

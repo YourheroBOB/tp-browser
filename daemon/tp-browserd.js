@@ -173,7 +173,7 @@ function broadcastPush(targetId, kind, payload) {
     if (hub) hub.resetSiteAuth(targetId).catch(() => {});
   }
   if (kind === 'coride' && payload?.mode) {
-    const found = store.findByTargetId(targetId);
+    const found = findTargetOwner(targetId);
     if (found) {
       found.space.ownership = payload.mode === 'human' ? 'user' : 'agent';
       found.space.state = payload.mode === 'human' ? 'handed-off' : 'active';

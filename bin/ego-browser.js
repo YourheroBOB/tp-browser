@@ -335,6 +335,15 @@ async function runNodeJs(args) {
       process.exit(2);
     }
     code = args[1];
+  } else if (typeof args[0] === 'string' && args[0].startsWith('-')) {
+    // `--eval`、`--help`、`-z` 這類不是 `-e`。舊寫法一律掉進 stdin：
+    // stdin 有內容就執行「另一份」腳本（可能 exit 0），空管線則報「腳本是空的」。
+    // 參數裡的程式被丟掉；空管線時還會讓自動化誤判失敗原因。
+    // 非旗標的第一個參數維持舊行為（改從 stdin 讀）。在讀 stdin、連線 daemon、
+    // 啟動瀏覽器之前就以用法錯誤結束。
+    console.error(`tp-browser nodejs: unknown option ${args[0]} (only -e is supported)`);
+    console.error('tp-browser nodejs: usage: tp-browser nodejs -e "code"  |  tp-browser nodejs < script.js');
+    process.exit(2);
   } else {
     code = await new Promise((resolve, reject) => {
       let buf = '';

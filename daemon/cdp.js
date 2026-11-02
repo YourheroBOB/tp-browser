@@ -30,6 +30,8 @@ export class Cdp {
     this.sessions = new Set(); // known sessionIds
     this.ws = null;
     this.closed = false;
+    // close() 與現役 socket 的 onclose 都可能通知監聽者，只通知一次。
+    this.closeNotified = false;
     // connect() 握手期間建立的 socket 與其 reject 回呼：close() 可能在 WebSocket
     // onopen 之前抵達（呼叫端不等握手就收手），此時 this.ws 仍是 null，若只設
     // closed=true 會漏掉這條正在建立的連線。close() 據此主動關閉並讓 connect()
@@ -145,14 +147,7 @@ export class Cdp {
         if (this.ws !== ws && !this.closed) return;
         this.closed = true;
         this._rejectPending();
-        // 與 _recv 相同：先快照再迭代。close handler 在分派中途 off() 其他 close
-        // handler 時，直接迭代 Set 會把後者跳過（漏呼叫）；快照則保證本輪已註冊的
-        // handler 都恰好被呼叫一次，且中途註冊的不會被同一輪走訪到。
-        for (const fn of [...(this.closeHandlers ?? [])]) {
-          // 單一 close handler 丟錯不可中斷後續 handler（例如 daemon 的重新附掛邏輯），
-          // 也不可讓錯誤從事件回呼往外冒；比照 onEvent 逐個隔離並記錄。
-          try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
-        }
+        this._emitClose();
       };
       ws.onmessage = (ev) => this._recv(ev.data);
     });
@@ -228,6 +223,19 @@ export class Cdp {
     this.pending.clear();
   }
 
+  // 連線結束只通知一次。呼叫端 close() 與現役 socket 的 onclose 都會進來。
+  // 先設旗標再呼叫，handler 重入 close() 不會再派送一輪。
+  // 快照迭代：分派中途 off() 其他 handler 仍會被呼叫恰好一次，中途新增的不會在本輪走訪到。
+  _emitClose() {
+    if (this.closeNotified) return;
+    this.closeNotified = true;
+    for (const fn of [...(this.closeHandlers ?? [])]) {
+      // 單一 close handler 丟錯不可中斷後續 handler（例如 daemon 的重新附掛邏輯），
+      // 也不可讓錯誤從事件回呼往外冒；比照 onEvent 逐個隔離並記錄。
+      try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
+    }
+  }
+
   close() {
     this.closed = true;
 
@@ -255,6 +263,10 @@ export class Cdp {
     this._rejectPending();
 
     try { this.ws?.close(); } catch {}
+    // ws.close() 對不回應的對端不會立刻派送 onclose。once()/onClose 若只掛在
+    // 那個事件上，會繼續占住 handler 與計時器；Infinity 等待則永不 settle。
+    // 若上面的 close 已同步走進 onclose 並通知過，這裡直接返回。
+    this._emitClose();
   }
 }
 

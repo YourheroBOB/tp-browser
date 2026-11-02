@@ -923,6 +923,10 @@ export class BrowserHub {
       return { url: targetUrl, frameId: res.frameId };
     }
     if (waitUntil === 'networkidle') {
+      // netQuietAt may already be hundreds of ms in the past from the previous
+      // page. Counting that gap resolves networkidle on the first iteration,
+      // before this navigation's requests are tracked.
+      if (st.net.size === 0) st.netQuietAt = Date.now();
       const deadline = started + timeout;
       while (Date.now() < deadline) {
         if (st.net.size === 0 && st.netQuietAt && Date.now() - st.netQuietAt >= 500) return { url: res.url || url, frameId: res.frameId };

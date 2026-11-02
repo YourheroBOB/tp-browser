@@ -318,6 +318,16 @@ async function runNodeJs(args) {
   }
   code = String(code || '').replace(/^﻿/, '');
 
+  // 空腳本（`nodejs < /dev/null`、只含空白的 heredoc、變數展開失敗的管線、`-e ''`）不是有效任務。
+  // 舊寫法會照樣往下走 ensureRunning()：沒有 daemon 時甚至會去跑啟動器「重啟整個瀏覽器」，
+  // 最後「成功」執行一支什麼都不做的腳本並回 exit 0，使用者因此無法分辨
+  // 「腳本真的沒做事」與「內容根本沒送進來」（例如 heredoc 被截斷）。
+  // 這與上面 `-e` 缺字串的處理同一原則：在接觸任何 daemon／瀏覽器之前就以用法錯誤結束。
+  if (!code.trim()) {
+    console.error('tp-browser nodejs: the script is empty; pass -e "code" or a non-empty heredoc/pipe');
+    process.exit(2);
+  }
+
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {
     console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`);

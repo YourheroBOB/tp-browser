@@ -15,7 +15,10 @@
     if (!r) { r = ++rseq; refMap.set(el, r); refIndex.set(r, el); }
     return r;
   };
-  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  // Coerce instead of assuming a string. Labels/values arrive from an agent call and are
+  // free-form (`{ label: 20 }`, numeric option values…); `(20).replace(...)` used to throw
+  // a raw TypeError straight through the CDP boundary instead of reporting "no match".
+  const norm = (s) => (s === null || s === undefined ? '' : String(s)).replace(/\s+/g, ' ').trim();
   const trunc = (s, n) => (s.length > n ? s.slice(0, n) + '…' : s);
 
   const INTERACTIVE = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY', 'DETAILS']);
@@ -172,6 +175,11 @@
   }
 
   function select(sel) {
+    // A non-string selector (missing argument, null, number, object…) used to blow up in
+    // parseSelector with `sel.match is not a function`, while every other malformed
+    // selector is reported as { error: 'invalid selector' }. Keep that contract so the
+    // caller sees a normal "0 matches / invalid selector" instead of a CDP exception.
+    if (typeof sel !== 'string') return { els: [], spec: { kind: 'invalid' }, error: 'invalid selector' };
     const spec = parseSelector(sel);
     let els = [];
     switch (spec.kind) {
@@ -272,7 +280,9 @@
     return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, x: r.left, y: r.top, w: r.width, h: r.height };
   }
 
-  function resolve(sel, { timeoutMs = 0, requireVisible = true } = {}) {
+  function resolve(sel, opts = {}) {
+    // `resolve(sel, null)` used to throw while destructuring the options right here.
+    const { timeoutMs = 0, requireVisible = true } = opts || {};
     const res = select(sel);
     let els = res.els;
     if (requireVisible) els = els.filter((el) => visibleInViewport(el) || INTERACTIVE.has(el.tagName));
@@ -412,8 +422,14 @@
       if (!o) return { ok: false, error: 'no option matches ' + describePick(pick) };
       chosen.push(o);
     }
-    if (!el.multiple) { el.value = chosen.length ? chosen[0].value : ''; }
-    else { for (const o of opts) o.selected = chosen.includes(o); }
+    // Pin the exact <option> nodes that were matched. `select.value = v` only selects the
+    // *first* option whose value equals v, so a page with duplicated values (two options
+    // sharing value="foo", or options that fall back to value = their text) silently ended
+    // up with a different option selected than the caller asked for, while we still
+    // reported { ok: true, selected: [...] }. Setting `selected` on the matched nodes is
+    // correct for both single and multiple selects.
+    if (!el.multiple) el.value = chosen.length ? chosen[0].value : '';
+    for (const o of opts) o.selected = chosen.includes(o);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return { ok: true, selected: chosen.map((o) => o.value) };

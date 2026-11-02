@@ -290,8 +290,25 @@ if (bestCandidate) {
   const srcCookies = existsSync(join(bestCandidate.profDir, 'Network', 'Cookies'))
     ? join(bestCandidate.profDir, 'Network', 'Cookies')
     : join(bestCandidate.profDir, 'Cookies');
-  const dstCookiesDir = process.platform === 'win32' ? join(profileDef, 'Network') : profileDef;
-  const dstCookies = join(dstCookiesDir, 'Cookies');
+  // Chromium >= 96 stores cookies in `Default/Network/Cookies` on *every* desktop platform, not
+  // only on Windows. The source side above already prefers that layout; hardcoding the destination
+  // to `Default/Cookies` meant that a profile which already had a `Network/Cookies` database got a
+  // sibling file next to it instead: the browser kept reading the untouched (stale, ignored) DB
+  // while the log line below still claimed a successful sync, so the imported logins never took
+  // effect. Follow whichever layout the destination profile already uses, and only fall back to the
+  // platform default when neither file exists — that keeps legacy `Default/Cookies` profiles (and
+  // profiles created before this fix) working exactly as before.
+  const dstNetworkCookies = join(profileDef, 'Network', 'Cookies');
+  const dstLegacyCookies = join(profileDef, 'Cookies');
+  let dstCookies;
+  if (existsSync(dstNetworkCookies)) {
+    dstCookies = dstNetworkCookies;
+  } else if (existsSync(dstLegacyCookies)) {
+    dstCookies = dstLegacyCookies;
+  } else {
+    dstCookies = process.platform === 'win32' ? dstNetworkCookies : dstLegacyCookies;
+  }
+  const dstCookiesDir = dirname(dstCookies);
   if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
     const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
     const dstLocalStatePath = join(profileRoot, 'Local State');

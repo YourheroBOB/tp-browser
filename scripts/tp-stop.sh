@@ -24,9 +24,14 @@ PROFILE_RE="$(esc_regex "$PROFILE_DIR")"
 # when the SIGTERM below arrives. Parsing is deliberately forgiving: a damaged or
 # out-of-range daemon.json must never abort the stop path, so anything unparsable
 # falls back to the two defaults.
+# The value may legally be written as a JSON string ("port": "18802"): hand-edited
+# configs and some installers do that, and ego-stop.ps1 already accepts it via an
+# [int] cast. Without tolerating the optional quote the shell stopper silently used
+# the defaults only, so a string-typed custom port was never flushed. Hence the
+# optional '"'* before the digits.
 FLUSH_PORTS="9772 9774"
 if [ -r "$DATA_DIR/daemon.json" ]; then
-  JSON_PORT="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*0*\([0-9][0-9]*\).*/\1/p' "$DATA_DIR/daemon.json" 2>/dev/null | sed -n '1p')"
+  JSON_PORT="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*"*0*\([0-9][0-9]*\).*/\1/p' "$DATA_DIR/daemon.json" 2>/dev/null | sed -n '1p')"
   if [ -n "$JSON_PORT" ] && [ "${#JSON_PORT}" -le 5 ] &&
      [ "$JSON_PORT" -ge 1 ] && [ "$JSON_PORT" -le 65535 ] &&
      [ "$JSON_PORT" != "9772" ] && [ "$JSON_PORT" != "9774" ]; then

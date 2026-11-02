@@ -6,8 +6,20 @@ if (Test-Path $DaemonJson) {
     try {
         $Cfg = Get-Content -Raw -Path $DaemonJson | ConvertFrom-Json
         if ($Cfg.port) {
-            $CfgPort = [int]$Cfg.port
-            if ($CfgPort -ge 1 -and $CfgPort -le 65535 -and $Ports -notcontains $CfgPort) { $Ports += $CfgPort }
+            # [int] 會把 true 收成 1，也會把 18802.9 這類 Double 四捨五入成別的埠。
+            # Windows PowerShell 5.1 的 ConvertFrom-Json 又把所有 JSON 數字讀成 Double，
+            # 所以只能擋「非整數」，整數值的 Double（例如 18802.0）仍要放行。
+            $RawPort = $Cfg.port
+            $RejectPort = $false
+            if ($RawPort -is [bool]) {
+                $RejectPort = $true
+            } elseif (($RawPort -is [double]) -or ($RawPort -is [float]) -or ($RawPort -is [decimal])) {
+                if ($RawPort -ne [math]::Truncate($RawPort)) { $RejectPort = $true }
+            }
+            if (-not $RejectPort) {
+                $CfgPort = [int]$Cfg.port
+                if ($CfgPort -ge 1 -and $CfgPort -le 65535 -and $Ports -notcontains $CfgPort) { $Ports += $CfgPort }
+            }
         }
     } catch {}
 }
@@ -18,12 +30,14 @@ foreach ($Port in $Ports) {
 }
 Start-Sleep -Milliseconds 1000
 $Stopped = 0
+# 終止數必須寫進腳本範圍。管線 ForEach-Object 在 Windows PowerShell 5.1 是子範圍，
+# 裸的遞增只會改到子範圍，訊息會永遠顯示 terminated 0。
 Get-CimInstance Win32_Process | Where-Object {
     ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
     ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    $Stopped++
+    $script:Stopped++
 }
 
 $Remaining = @()

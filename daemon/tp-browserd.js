@@ -644,7 +644,9 @@ async function pageCall(p) {
     case 'mouse.move': {
       const [x, y, opts = {}] = args;
       const steps = opts.steps ?? 1;
-      for (let i = 1; i <= steps; i++) await h.mouseInput(tid, 'mouseMoved', x * i / steps, y * i / steps);
+      const fromX = h._pos?.x ?? 0;
+      const fromY = h._pos?.y ?? 0;
+      for (let i = 1; i <= steps; i++) await h.mouseInput(tid, 'mouseMoved', fromX + (x - fromX) * (i / steps), fromY + (y - fromY) * (i / steps));
       h._pos = { x, y };
       result = {};
       break;

@@ -43,6 +43,19 @@ function assertPageLabel(label) {
   }
 }
 
+// bindPage／addPage 會整筆換掉分頁。若被換掉的 targetId 正是 activeTargetId，
+// 而且沒有其他分頁還指著它，就必須清成 null——否則 ledger 會一直指向已不存在的
+// target。removePage 已維持這個不變量；這裡補上覆寫路徑。
+// 刻意放在模組層而不是 Store.prototype，避免多出方法、破壞公開方法面契約。
+function replacePage(s, label, targetId, openedBy) {
+  const prev = Object.hasOwn(s.pages, label) ? s.pages[label] : undefined;
+  s.pages[label] = { targetId, openedBy, title: '', url: '' };
+  if (prev && prev.targetId != null && prev.targetId === s.activeTargetId && prev.targetId !== targetId) {
+    const stillHeld = Object.values(s.pages).some((p) => p && p.targetId === prev.targetId);
+    if (!stillHeld) s.activeTargetId = null;
+  }
+}
+
 export class Store {
   constructor(file) {
     this.file = file;
@@ -149,14 +162,14 @@ export class Store {
     // 非法 label 若照舊直接指派，會改掉整個 pages 物件的原型（分頁在 persist 後消失）；
     // 因此明確拒絕，而不是靜默寫入一份壞掉的 ledger。
     assertPageLabel(label);
-    s.pages[label] = { targetId, openedBy, title: '', url: '' };
+    replacePage(s, label, targetId, openedBy);
     this.persist();
   }
   addPage(spaceId, label, targetId, openedBy = 'agent') {
     const s = this.get(spaceId);
     if (!s) throw new Error(`unknown space ${spaceId}`);
     assertPageLabel(label);
-    s.pages[label] = { targetId, openedBy, title: '', url: '' };
+    replacePage(s, label, targetId, openedBy);
     this.persist();
   }
   removePage(spaceId, label) {

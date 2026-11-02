@@ -17,8 +17,33 @@ EGO_RE="$(esc_regex 'ego-browserd.js')"
 TPD_RE="$(esc_regex 'tp-browserd.js')"
 PROFILE_RE="$(esc_regex "$PROFILE_DIR")"
 
-curl -fsS --max-time 3 "http://127.0.0.1:9772/flush-and-close" >/dev/null 2>&1 || true
-curl -fsS --max-time 3 "http://127.0.0.1:9774/flush-and-close" >/dev/null 2>&1 || true
+# The daemon records the port it actually listens on in daemon.json, and
+# `tp-start.sh --alt-port` or custom deployments (e.g. 18802/18800) do not
+# listen on 9772 at all. Flushing only the two built-in ports meant those
+# hosts were SIGTERMed *without* /flush-and-close, dropping the Cookie /
+# storage state that the graceful path exists to persist. Mirror
+# ego-stop.ps1 and honour the configured port, but only a plausible one.
+DAEMON_JSON="$DATA_DIR/daemon.json"
+FLUSH_PORTS="9772 9774"
+if [ -r "$DAEMON_JSON" ]; then
+  # "port" is a distinct JSON key from "chromePort", so the CDP port can never
+  # be picked up here; a quoted, zero or out-of-range value simply fails to
+  # match and leaves the built-in ports untouched.
+  cfg_port=$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([1-9][0-9]*\).*/\1/p' "$DAEMON_JSON" | head -n 1)
+  case "$cfg_port" in
+    *[!0-9]*) cfg_port='' ;;
+  esac
+  if [ -n "$cfg_port" ] && [ "$cfg_port" -le 65535 ]; then
+    case " $FLUSH_PORTS " in
+      *" $cfg_port "*) ;;
+      *) FLUSH_PORTS="$FLUSH_PORTS $cfg_port" ;;
+    esac
+  fi
+fi
+
+for flush_port in $FLUSH_PORTS; do
+  curl -fsS --max-time 3 "http://127.0.0.1:$flush_port/flush-and-close" >/dev/null 2>&1 || true
+done
 sleep 1.0
 
 pkill -f "$EGO_RE" 2>/dev/null || true

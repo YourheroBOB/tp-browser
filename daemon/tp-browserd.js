@@ -6,7 +6,7 @@
 // Zero npm dependencies; Node >= 22.
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, copyFileSync, rmSync, readdirSync, realpathSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -145,6 +145,14 @@ function ensureToken() {
     t = randomBytes(24).toString('hex');
     writeFileSync(p, t, { mode: 0o600 });
   }
+  // writeFileSync()'s `mode` option only applies when the file is actually
+  // created. A token file that already exists — empty, restored from a backup,
+  // or created by another tool with the ambient umask (`touch token`, an older
+  // start script, a copied install) — silently keeps its old, possibly
+  // group/world-readable permissions. This process is the only authority for
+  // that secret (it gates every /rpc and /events call), so enforce 0600 on
+  // whichever value we end up trusting, not just on freshly written ones.
+  try { chmodSync(p, 0o600); } catch {}
   return t;
 }
 const TOKEN = ensureToken();

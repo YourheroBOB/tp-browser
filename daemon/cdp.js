@@ -70,6 +70,24 @@ export class Cdp {
         return;
       }
 
+      // 同一 client 上再次 connect()（例如 daemon 重新附掛、暫時性失敗後重試成功再重連）：
+      // 舊的「現役」socket 若還在，必須先解除掛載、解除回呼、再關掉。舊版直接覆寫
+      // this.ws，留下兩條問題：
+      //   1. 舊 socket 永遠沒人關閉（長期執行的 daemon 每重連一次就多洩漏一條連線）；
+      //   2. 舊 socket 仍掛著 onmessage，會把「上一條連線」的 CDP 事件繼續派送給
+      //      this.handlers，呼叫端看到的是已失效連線的事件混進新連線的資料流；
+      //      它稍後派送的 close 也仍會走進 onclose 的一般路徑。
+      // 解除回呼後，舊 socket 之後的任何事件都不再屬於這條 client（onclose 的
+      // `this.ws !== ws` 防線則保留給「逾時／失敗被中止」的握手 socket）。
+      if (this.ws) {
+        const previous = this.ws;
+        this.ws = null;
+        previous.onopen = null;
+        previous.onmessage = null;
+        previous.onerror = null;
+        previous.onclose = null;
+        try { previous.close(); } catch {}
+      }
       const ws = new WebSocket(this.wsUrl);
       this.connectSockets.add(ws);
       // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。
@@ -126,13 +144,7 @@ export class Cdp {
         // 並對從未存在的連線誤發 close handler（daemon 的重新附掛邏輯因此被觸發）。
         if (this.ws !== ws && !this.closed) return;
         this.closed = true;
-        for (const [, p] of this.pending) {
-          // 連線已死，回應永遠不會到；不清計時器的話每個未完成的 send 都會把
-          // 事件迴圈多撐住最多 timeout 毫秒（CLI 與測試因此卡住）。
-          clearTimeout(p.timer);
-          p.reject(new Error('CDP connection closed'));
-        }
-        this.pending.clear();
+        this._rejectPending();
         // 與 _recv 相同：先快照再迭代。close handler 在分派中途 off() 其他 close
         // handler 時，直接迭代 Set 會把後者跳過（漏呼叫）；快照則保證本輪已註冊的
         // handler 都恰好被呼叫一次，且中途註冊的不會被同一輪走訪到。
@@ -203,6 +215,19 @@ export class Cdp {
     });
   }
 
+  // 連線已死後把等待中的請求全部收掉：對端斷線（ws.onclose）與呼叫端主動 close()
+  // 共用同一條路徑，理由字串一律是 "CDP connection closed"。
+  // 必須清計時器：否則每個未完成的 send 都會把事件迴圈多撐住最多 timeout 毫秒
+  // （CLI 與測試因此卡住）。timeout 為 Infinity 的請求根本沒有任何計時器，少了這條
+  // 路徑就永遠不會 settle。
+  _rejectPending() {
+    for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error('CDP connection closed'));
+    }
+    this.pending.clear();
+  }
+
   close() {
     this.closed = true;
 
@@ -220,6 +245,14 @@ export class Cdp {
     for (const ws of handshaking) {
       try { ws.close(); } catch {}
     }
+
+    // 主動 close() 之後這條 client 永久不可用，回應不可能再到；收尾不可寄望在對端
+    // 的 close frame 上。真實 WebSocket 對「不回應的對端」要等關閉握手逾時才會派送
+    // onclose（TCP 半開、對端程序已死、握手卡住都是常見情境），期間等待中的請求會
+    // 一直懸置，計時器也把事件迴圈多撐住最多 timeout 毫秒；timeout 為 Infinity 的
+    // 請求更永遠不會 settle。先收掉 pending 再關 socket，讓後續任何 close handler
+    // 觀察到的都是已清空的狀態。
+    this._rejectPending();
 
     try { this.ws?.close(); } catch {}
   }

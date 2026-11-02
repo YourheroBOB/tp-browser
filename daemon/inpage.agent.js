@@ -132,7 +132,11 @@
         const cssPart = body.slice(0, hi);
         const mm = body.slice(hi).match(/^:(has-text|text-is)\(("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\)$/);
         if (!mm) return { kind: 'invalid' };
-        return { kind: 'cssText', css: cssPart, mode: mm[1], text: mm[2].slice(1, -1), nth };
+        // Same escaping contract as text="...": inside the quoted argument a backslash
+        // escapes the next character, so the matcher must compare the unescaped text.
+        // Slicing the quotes off without unescaping made `:has-text("say \"hi\"")` look
+        // for a literal backslash and silently match nothing for a valid selector.
+        return { kind: 'cssText', css: cssPart, mode: mm[1], text: unescapeQuoted(mm[2].slice(1, -1)), nth };
       }
       return { kind: 'css', value: body, nth };
     }
@@ -214,6 +218,10 @@
         break;
       }
       case 'href': {
+        // String#includes('') is true for every anchor, so `loc=href:` with a blank
+        // filter "matched" the whole page and resolve() could hand back one arbitrary
+        // link — the same hazard already rejected for `text=` / `:has-text()`.
+        if (!String(spec.value || '').trim()) return { els: [], spec, error: 'invalid selector' };
         els = Array.from(document.querySelectorAll('a[href]')).filter((el) => {
           const h = el.getAttribute('href') || '';
           return (el.href || '').includes(spec.value) || h.includes(spec.value);

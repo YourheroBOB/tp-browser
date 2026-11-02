@@ -349,7 +349,15 @@ if (bestCandidate) {
     dstCookies = process.platform === 'win32' ? dstNetworkCookies : dstLegacyCookies;
   }
   const dstCookiesDir = dirname(dstCookies);
-  if (fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
+  // Login Data / Web Data stay on disk when the keys differ, and they only
+  // decrypt with the destination key. Cookies sync installs the source
+  // os_crypt, so running it in that case makes every kept login undecryptable.
+  const dstAuthLocked = loginKeysConflict && ['Login Data', 'Login Data For Account', 'Web Data']
+    .some((dbName) => fileSize(join(profileDef, dbName)) > 0);
+  if (dstAuthLocked && fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
+    console.log('Skipped Cookies sync: destination login data is encrypted with a different os_crypt.encrypted_key');
+  }
+  if (!dstAuthLocked && fileSize(srcCookies) > 32768 && (forceSync || fileSize(dstCookies) < 65536)) {
     const srcLocalStatePath = join(bestCandidate.baseDir, 'Local State');
     const dstLocalStatePath = join(profileRoot, 'Local State');
     const srcOsCrypt = readSourceOsCrypt(srcLocalStatePath);

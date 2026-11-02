@@ -130,7 +130,11 @@ export class Cdp {
         this.ws = ws;
         settle(true, this);
       };
-      ws.onerror = () => { settle(false, new Error(`CDP connect failed: ${this.wsUrl}`)); };
+      ws.onerror = () => {
+        // 先定案成連線失敗，再關掉這條正在握手的 socket，避免 fd 留到 GC。
+        if (!settle(false, new Error(`CDP connect failed: ${this.wsUrl}`))) return;
+        try { ws.close(); } catch {}
+      };
       ws.onclose = () => {
         if (!settled) {
           // 握手完成前就斷線：不可讓 connect() 永遠 pending。close() 已發生時理由必須是 closed。
@@ -161,13 +165,20 @@ export class Cdp {
   _recv(raw) {
     let msg;
     try { msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString()); } catch { return; }
+    // JSON.parse('null')、'true'、'1' 都會成功。接著讀 msg.id 會拋 TypeError，
+    // 例外從 WebSocket handler 冒出去會打掛 daemon。
+    if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
-      if (msg.error) p.reject(new CdpError(p.method, msg.error));
-      else p.resolve(msg.result);
+      try {
+        if (msg.error) p.reject(new CdpError(p.method, msg.error));
+        else p.resolve(msg.result);
+      } catch (e) {
+        console.error('[ego-browserd] CDP response handler error:', e);
+      }
       return;
     }
     if (msg.sessionId) this.sessions.add(msg.sessionId);
@@ -221,11 +232,18 @@ export class Cdp {
   // （CLI 與測試因此卡住）。timeout 為 Infinity 的請求根本沒有任何計時器，少了這條
   // 路徑就永遠不會 settle。
   _rejectPending() {
-    for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
-      p.reject(new Error('CDP connection closed'));
-    }
+    const pending = [...this.pending.values()];
+    // 先清掉 map 再逐一 reject。某個 reject 回呼同步丟錯時，其餘請求仍要 settle，
+    // close() 也不會停在 clear() 之前。
     this.pending.clear();
+    for (const p of pending) {
+      clearTimeout(p.timer);
+      try {
+        p.reject(new Error('CDP connection closed'));
+      } catch (e) {
+        console.error('[ego-browserd] CDP reject handler error:', e);
+      }
+    }
   }
 
   close() {

@@ -79,7 +79,7 @@ if [ "$RESTART" -eq 0 ]; then
       exit 0
     else
       # If already running in headed mode (no --headless in process args), preserve open window & tabs!
-      if ps ax -o command= 2>/dev/null | grep "$PROFILE_DIR" | grep -v grep | grep -qv -- "--headless"; then
+      if ps ax -o command= 2>/dev/null | grep -F "$PROFILE_DIR" | grep -v grep | grep -qvF -- "--headless"; then
         echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s), mode=headed)"
         exit 0
       fi
@@ -136,7 +136,7 @@ fi
 FLUSH_PORTS="$DAEMON_PORT 9772 9774"
 if [ -f "$DATA_DIR/daemon.json" ]; then
   CFG_FLUSH_PORT="$(tr -d '\r' < "$DATA_DIR/daemon.json" 2>/dev/null \
-    | sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    | sed -n 's/.*"port"[[:space:]]*:[[:space:]]*0*\([0-9][0-9]*\).*/\1/p' \
     | head -n 1 || true)"
   if [ -n "${CFG_FLUSH_PORT:-}" ]; then
     FLUSH_PORTS="$FLUSH_PORTS $CFG_FLUSH_PORT"
@@ -157,7 +157,7 @@ for _flush_port in $FLUSH_PORTS; do
   FLUSH_SEEN="$FLUSH_SEEN$_flush_port "
   curl -fsS --max-time 3 "http://127.0.0.1:$_flush_port/flush-and-close" >/dev/null 2>&1 || true
 done
-sleep 1.0
+sleep 1.0 2>/dev/null || sleep 1
 
 # Stop existing TP Browser processes for this profile/daemon.
 # pkill only *sends* SIGTERM and returns immediately: it does not wait for the
@@ -167,8 +167,17 @@ sleep 1.0
 # appears to be in use", and tp-start finishes with TP_NOT_READY while leaving a
 # stray daemon behind. Poll until the processes are really gone and escalate to
 # SIGKILL, mirroring the hardened shutdown loop already used by tp-stop.sh.
+# pkill/pgrep -f 吃的是延伸正則。路徑裡的「.」若不跳脫會匹配到別的程序；
+# HOME 含「+」或「[」時則殺不掉正確行程（與 tp-stop.sh 相同的跳脫）。
+esc_regex() {
+  printf '%s' "$1" | sed -e 's/[][\.*^$()+?{}|]/\\&/g'
+}
+EGO_RE="$(esc_regex 'ego-browserd.js')"
+TPD_RE="$(esc_regex 'tp-browserd.js')"
+PROFILE_RE="$(esc_regex "$PROFILE_DIR")"
+
 tp_procs_alive() {
-  for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
+  for pattern in "$EGO_RE" "$TPD_RE" "$PROFILE_RE"; do
     if pgrep -f "$pattern" >/dev/null 2>&1; then
       return 0
     fi
@@ -176,25 +185,26 @@ tp_procs_alive() {
   return 1
 }
 
-pkill -f "ego-browserd.js" 2>/dev/null || true
-pkill -f "tp-browserd.js" 2>/dev/null || true
-pkill -f "$PROFILE_DIR" 2>/dev/null || true
+pkill -f "$EGO_RE" 2>/dev/null || true
+pkill -f "$TPD_RE" 2>/dev/null || true
+pkill -f "$PROFILE_RE" 2>/dev/null || true
 # Grace period for SIGTERM; also the exact old behaviour when pgrep is missing.
-sleep 0.6
+# 分數秒 sleep 被拒絕時改睡 1 秒，避免 set -e 在瀏覽器起來之前中止。
+sleep 0.6 2>/dev/null || sleep 1
 
 # Wait at most 5 rounds for a graceful exit, then force only what is still there.
 STOP_WAITED=0
 while tp_procs_alive; do
   if [ "$STOP_WAITED" -ge 5 ]; then
-    for pattern in "ego-browserd.js" "tp-browserd.js" "$PROFILE_DIR"; do
+    for pattern in "$EGO_RE" "$TPD_RE" "$PROFILE_RE"; do
       if pgrep -f "$pattern" >/dev/null 2>&1; then
         pkill -9 -f "$pattern" 2>/dev/null || true
       fi
     done
-    sleep 0.5
+    sleep 0.5 2>/dev/null || sleep 1
     break
   fi
-  sleep 0.6
+  sleep 0.6 2>/dev/null || sleep 1
   STOP_WAITED=$((STOP_WAITED + 1))
 done
 
@@ -226,7 +236,7 @@ if [ "$ALT_PORT" -eq 1 ]; then
 else
   spawn_detached "$LOGS_DIR/daemon.log" node --experimental-websocket "$DAEMON_JS"
 fi
-sleep 0.3
+sleep 0.3 2>/dev/null || sleep 1
 
 # Launch Chrome/Chromium bound strictly to 127.0.0.1
 SANDBOX_FLAG=""
@@ -277,7 +287,7 @@ while [ $i -lt 20 ]; do
     fi
     exit 0
   fi
-  sleep 0.5
+  sleep 0.5 2>/dev/null || sleep 1
   i=$((i + 1))
 done
 

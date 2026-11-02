@@ -37,7 +37,16 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 function resolvePolicy(policy) {
   const out = { ...DEFAULT_POLICY };
   if (isPlainObject(policy)) {
-    for (const [k, v] of Object.entries(policy)) if (v !== undefined) out[k] = v;
+    for (const [k, v] of Object.entries(policy)) {
+      // 只收已知鍵。JSON 的 "__proto__" 自有鍵若直接賦值，會改掉 out 的原型。
+      if (v === undefined || !Object.hasOwn(DEFAULT_POLICY, k)) continue;
+      out[k] = v;
+    }
+  }
+  // 負的閒置窗會讓每個有 createdAt 的空間都變成 idle，計畫會把它們關掉。
+  // 退回預設 30 分鐘。NaN／null 維持原語意（不算 idle）。
+  if (typeof out.idleSpaceMs === 'number' && Number.isFinite(out.idleSpaceMs) && out.idleSpaceMs < 0) {
+    out.idleSpaceMs = DEFAULT_POLICY.idleSpaceMs;
   }
   return out;
 }
@@ -179,7 +188,9 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
 
   // 上限：只犧牲「非存活、非受保護」的空間，由最舊的開始；永不為滿足上限而關閉存活空間。
   let overCap = 0;
-  const maxSpaces = Number(p.maxSpaces);
+  // null 代表不設上限（見 DEFAULT_POLICY 註解）。Number(null) === 0 會把上限當成零，
+  // 關掉所有非存活空間。
+  const maxSpaces = p.maxSpaces === null ? Number.NaN : Number(p.maxSpaces);
   if (Number.isFinite(maxSpaces) && maxSpaces >= 0) {
     const remaining = ordered.filter((s) => !closed.has(String(s.id)));
     const overflow = remaining.length - maxSpaces;

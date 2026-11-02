@@ -43,6 +43,30 @@ function assertPageLabel(label) {
   }
 }
 
+// `space.activeTargetId` 的不變量：它必須是 null，或等於該空間內「某個分頁」的 targetId。
+// daemon 重啟後就是靠這個欄位決定後續 RPC 要送往哪個 target；一旦它指向已被覆寫或刪除的
+// targetId，重載後就會把呼叫送到一個已經不存在（或已換人）的 target 上。removePage 原本
+// 只在「刪掉的分頁剛好是作用中 target」時清掉它，但 bindPage／addPage 覆寫同名 label、
+// 以及 setPage 的 patch 改掉 targetId 時，舊 targetId 同樣會從 ledger 消失而留下懸空指標。
+// 因此每次異動 pages 後都統一對帳：只有在 activeTargetId 已經沒有任何分頁引用時才清成
+// null（若另一個 label 仍綁著同一個 targetId，代表 target 還在，保留）。只動記憶體，
+// persist 由呼叫端負責；也刻意做成模組層函式而非 Store 的 prototype 方法，維持公開介面契約。
+function reconcileActiveTarget(space) {
+  if (space === null || typeof space !== 'object') return;
+  const active = space.activeTargetId;
+  if (active === null || active === undefined) return;
+  const pages = space.pages;
+  if (pages === null || typeof pages !== 'object' || Array.isArray(pages)) {
+    space.activeTargetId = null;
+    return;
+  }
+  for (const label of Object.keys(pages)) {
+    const page = pages[label];
+    if (page !== null && typeof page === 'object' && page.targetId === active) return;
+  }
+  space.activeTargetId = null;
+}
+
 export class Store {
   constructor(file) {
     this.file = file;
@@ -141,6 +165,8 @@ export class Store {
     const page = s.pages[label];
     if (!page) return;
     Object.assign(page, patch);
+    // patch 若改掉 targetId，原本的 activeTargetId 可能就此懸空。
+    reconcileActiveTarget(s);
     this.persist();
   }
   bindPage(spaceId, label, targetId, openedBy = 'agent') {
@@ -150,6 +176,8 @@ export class Store {
     // 因此明確拒絕，而不是靜默寫入一份壞掉的 ledger。
     assertPageLabel(label);
     s.pages[label] = { targetId, openedBy, title: '', url: '' };
+    // 覆寫同名 label 會丟掉原本的 targetId，作用中的指標必須跟著對帳。
+    reconcileActiveTarget(s);
     this.persist();
   }
   addPage(spaceId, label, targetId, openedBy = 'agent') {
@@ -157,6 +185,8 @@ export class Store {
     if (!s) throw new Error(`unknown space ${spaceId}`);
     assertPageLabel(label);
     s.pages[label] = { targetId, openedBy, title: '', url: '' };
+    // 覆寫同名 label 會丟掉原本的 targetId，作用中的指標必須跟著對帳。
+    reconcileActiveTarget(s);
     this.persist();
   }
   removePage(spaceId, label) {
@@ -164,11 +194,11 @@ export class Store {
     if (!s) return;
     // 非自有鍵一律視為不存在（避免把 Object.prototype 上的同名成員當成分頁）。
     if (!Object.hasOwn(s.pages, label)) return;
-    const page = s.pages[label];
     delete s.pages[label];
     // 被移除的分頁若正好是作用中的 target，activeTargetId 必須一起清掉，
-    // 否則 ledger 會一直指向已不存在的 targetId。
-    if (page && page.targetId != null && page.targetId === s.activeTargetId) s.activeTargetId = null;
+    // 否則 ledger 會一直指向已不存在的 targetId（另一個 label 仍綁著同一個
+    // targetId 時則保留，因為那個 target 還在）。
+    reconcileActiveTarget(s);
     this.persist();
   }
   deleteSpace(id) {

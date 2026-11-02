@@ -37,21 +37,60 @@ else
 fi
 
 # Check if running inside WSL2 and --headed is requested -> delegate to Windows desktop GUI browser!
-# Test hooks (behaviour is byte-identical when unset): TP_START_PROC_VERSION overrides
-# the kernel-version source file, TP_START_WIN_PS the Windows powershell.exe path and
-# TP_START_WIN_USERS the Windows Users root, so the delegation branch can be exercised
-# without a real /mnt/c mount.
+# Test hooks: TP_START_PROC_VERSION overrides the kernel-version source file,
+# TP_START_WIN_PS the Windows powershell.exe path, TP_START_WIN_USERS the Windows
+# Users root, and TP_START_WIN_USER the profile name. When a hook is unset the
+# built-in default is used, so the delegation branch can be exercised without a
+# real /mnt/c mount.
 PROC_VERSION_SRC="${TP_START_PROC_VERSION:-/proc/version}"
 WIN_PS="${TP_START_WIN_PS:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
 WIN_USERS_ROOT="${TP_START_WIN_USERS:-/mnt/c/Users}"
 if [ "$HEADED" -eq 1 ] && [ -f "$PROC_VERSION_SRC" ] && grep -qi microsoft "$PROC_VERSION_SRC" 2>/dev/null; then
   WIN_EGO_DIR=""
-  for d in "$WIN_USERS_ROOT"/*/.local/share/ego-linux; do
-    if [ -f "$d/scripts/ego-start.ps1" ]; then WIN_EGO_DIR="$d"; break; fi
+  # Several Windows profiles can each ship ego-start.ps1. Prefer the explicit
+  # hook, then this login, so the token copied into $DATA_DIR belongs to the
+  # user who launched tp-start. A name that is not one path segment is ignored.
+  # When none of those profiles has the launcher, keep the first glob match so a
+  # single Windows install under a different account name still delegates.
+  for _prefer_user in "${TP_START_WIN_USER:-}" "${USER:-}" "${LOGNAME:-}"; do
+    if [ -z "$_prefer_user" ]; then
+      continue
+    fi
+    case "$_prefer_user" in
+      .|..|*/*) continue ;;
+    esac
+    _candidate="$WIN_USERS_ROOT/$_prefer_user/.local/share/ego-linux"
+    if [ -f "$_candidate/scripts/ego-start.ps1" ]; then
+      WIN_EGO_DIR="$_candidate"
+      break
+    fi
   done
+  if [ -z "$WIN_EGO_DIR" ]; then
+    for d in "$WIN_USERS_ROOT"/*/.local/share/ego-linux; do
+      if [ -f "$d/scripts/ego-start.ps1" ]; then WIN_EGO_DIR="$d"; break; fi
+    done
+  fi
   if [ -x "$WIN_PS" ] && [ -n "$WIN_EGO_DIR" ]; then
     WIN_USER="$(basename "$(dirname "$(dirname "$(dirname "$WIN_EGO_DIR")")")")"
-    WIN_SCRIPT="C:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
+    # /mnt/<letter>/Users is that Windows drive (D: machines were sent to C:).
+    # Any other root, including the default when the prefix does not match, stays C:.
+    _win_drive=C
+    case "$WIN_USERS_ROOT" in
+      */mnt/[A-Za-z]/Users|*/mnt/[A-Za-z]/Users/)
+        _mnt_tail=${WIN_USERS_ROOT%/}
+        _mnt_tail=${_mnt_tail%/Users}
+        _mnt_tail=${_mnt_tail%/}
+        _win_letter=$(printf '%.1s' "${_mnt_tail##*/}")
+        _win_drive=$(
+          { printf '%s' "$_win_letter" | tr '[:lower:]' '[:upper:]'; } 2>/dev/null || true
+        )
+        case "$_win_drive" in
+          [A-Z]) ;;
+          *) _win_drive=C ;;
+        esac
+        ;;
+    esac
+    WIN_SCRIPT="${_win_drive}:\\Users\\$WIN_USER\\.local\\share\\ego-linux\\scripts\\ego-start.ps1"
     # Forward every mode flag the user asked for. Dropping -AltPort here made the
     # Windows daemon come up on 9772/9773 (or its own 9773-derived group) instead of
     # the requested 9774/9775 — and that wrong daemon.json was then copied back to

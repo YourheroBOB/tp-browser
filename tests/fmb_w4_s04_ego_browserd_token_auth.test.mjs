@@ -103,10 +103,21 @@ async function probeHealth(port) {
   }
 }
 
-async function waitForHealth(port, ms = 10_000) {
+// 只有「我們 spawn 的 daemon 仍活著」時，/health 回 200 才算數。
+// 9774 是多個測試檔共用的固定埠：並行跑時別的測試（例如 fmb_integration_cli 的
+// 假 daemon）可能在 probe 之後才佔住它，我們的 daemon 因 EADDRINUSE 立即退出，
+// 舊版 waitForHealth 卻把別人的 /health 當成自己的，接著對假 daemon 斷言 403 而誤報失敗。
+const childAlive = (child) => child.exitCode === null && child.signalCode === null;
+
+async function waitForHealth(port, child, ms = 10_000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
-    if (await probeHealth(port)) return true;
+    if (!childAlive(child)) return false;
+    if (await probeHealth(port)) {
+      // listen 失敗會在綁定當下就讓程序退出；稍等一下再確認仍是我們的 daemon 在回應。
+      await sleep(200);
+      return childAlive(child);
+    }
     await sleep(150);
   }
   return false;
@@ -159,8 +170,8 @@ test('缺少 token／空白 token／錯誤 token 一律 403，正確 token 才�
   writeFileSync(tokenPath, '', { mode: 0o600 });
   const child = startDaemon(home);
   try {
-    if (!(await waitForHealth(ALT_PORT))) {
-      t.skip(`daemon 未在時限內回應 /health（環境問題）：${lastStderr.slice(-200)}`);
+    if (!(await waitForHealth(ALT_PORT, child))) {
+      t.skip(`daemon 未在時限內回應 /health，或已退出（埠被其他測試佔用／環境問題）：${lastStderr.slice(-200)}`);
       return;
     }
     const tok = readFileSync(tokenPath, 'utf8').trim();

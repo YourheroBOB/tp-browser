@@ -37,7 +37,9 @@
       case 'UL': case 'OL': return 'list';
       case 'LI': return 'listitem';
       case 'IMG': return 'img';
-      case 'SVG': return 'svg_root';
+      // HTML documents do not uppercase SVG tagNames (not the HTML namespace).
+      case 'SVG':
+      case 'svg': return 'svg_root';
       case 'TEXTAREA': return 'textbox';
       case 'SELECT': return 'combobox';
       case 'TABLE': return 'table';

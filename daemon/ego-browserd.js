@@ -52,6 +52,12 @@ const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
 const MAX_RPC_BODY_BYTES = 1048576;
 mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 mkdirSync(DOWNLOADS_DIR, { recursive: true, mode: 0o700 });
+// mkdirSync()'s `mode` is only applied when the directory is actually created, so a
+// data root left behind by an older/looser install kept its bits (e.g. 0755) even
+// though the docs promise 0700 — which also left the ledger and downloads reachable by
+// other local users. Enforce it explicitly; we own these directories.
+try { chmodSync(DATA_DIR, 0o700); } catch {}
+try { chmodSync(DOWNLOADS_DIR, 0o700); } catch {}
 
 const store = new Store(join(DATA_DIR, 'spaces.json'));
 let hub = null;
@@ -176,7 +182,11 @@ function checkToken(req) {
   if (b.length === 0 || TOKEN_BUF.length === 0) return false;
   return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
 }
-writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
+const DAEMON_JSON_PATH = join(DATA_DIR, 'daemon.json');
+writeFileSync(DAEMON_JSON_PATH, JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
+// Same writeFileSync() caveat as the token handling above: `mode` is only honoured on
+// creation, so a pre-existing daemon.json could stay 0644 (leaking pid/ports). Force it.
+try { chmodSync(DAEMON_JSON_PATH, 0o600); } catch {}
 
 // ---------- SSE push channels ----------
 const sseClients = new Set();

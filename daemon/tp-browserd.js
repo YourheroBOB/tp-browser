@@ -270,6 +270,15 @@ async function handleRequest(req, res) {
     res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid request target' } }));
     return;
   }
+  // The loopback guard must run before EVERY route, static ones included.
+  // /newtab, /showcase and /docs used to be answered first, so a DNS-rebinding
+  // host (`Host: attacker.example`) or a cross-site browser request could still
+  // read them from a remote page — the guard has to be fail-closed, not ordered
+  // after the handlers it is supposed to protect.
+  if (isBrowserCrossSite(req) || req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
+    res.writeHead(403).end('forbidden host/origin');
+    return;
+  }
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -281,10 +290,6 @@ async function handleRequest(req, res) {
     } catch (e) {
       res.writeHead(404).end('Not found');
     }
-    return;
-  }
-  if (isBrowserCrossSite(req) || req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
-    res.writeHead(403).end('forbidden host/origin');
     return;
   }
   if (url.pathname === '/flush-and-close' && req.method === 'GET') {

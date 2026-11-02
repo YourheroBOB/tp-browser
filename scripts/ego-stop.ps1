@@ -44,13 +44,17 @@ for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
 # 可能在「剛送出最後一次終止」之後就結束，此時 $Remaining 仍是終止前拍下的快照；
 # 直接拿它判定失敗，會把一個其實已經停好的 stop 誤報成失敗（exit 1）。
 # 因此在判定成敗之前，重新查詢真正的狀態，並給程序一段有限、有界的寬限時間。
-for ($Verify = 0; $Verify -lt 3; $Verify++) {
+# 注意：最後一輪（$Verify = 3）只查、不再睡。舊寫法是每一輪都先查再「無條件」睡
+# 300ms，於是當最後一輪仍查到程序時，迴圈會先睡完才結束，接著卻拿「睡前」的快照
+# 判定失敗（exit 1）——最後一次 300ms 的寬限等於白等，且會把寬限期內其實已停好的
+# stop 誤報成停止失敗。現在判定用的永遠是最後一次查詢的最新快照。
+for ($Verify = 0; $Verify -lt 4; $Verify++) {
     $Remaining = @(Get-CimInstance Win32_Process | Where-Object {
         ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
         ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
     })
     if ($Remaining.Count -eq 0) { break }
-    Start-Sleep -Milliseconds 300
+    if ($Verify -lt 3) { Start-Sleep -Milliseconds 300 }
 }
 
 if ($Remaining.Count -gt 0) {

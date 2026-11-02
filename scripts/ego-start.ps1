@@ -149,6 +149,29 @@ if (-not $Restart) {
     } catch {}
 }
 
+# Resolve the daemon ports that must be flushed before the Stop-Process sweep below.
+# 9772/9774 are the built-in pairs, but daemon.json may point a daemon at a custom port
+# (e.g. the :18802 stack recorded in STATE.md). ego-stop.ps1 already reads that file for
+# the same reason; ego-start.ps1 did not, so such a daemon was hard-killed by the sweep
+# without ever getting the chance to flush cookies / storage. Malformed or out-of-range
+# values fall back to the built-in pairs (never invent a port to probe).
+function Get-FlushPorts([string]$DaemonJsonPath, [int[]]$BasePorts = @(9772, 9774)) {
+    $Ports = @($BasePorts)
+    if ([string]::IsNullOrWhiteSpace($DaemonJsonPath)) { return $Ports }
+    try {
+        if (-not (Test-Path -LiteralPath $DaemonJsonPath -PathType Leaf -ErrorAction SilentlyContinue)) { return $Ports }
+        $Cfg = Get-Content -Raw -LiteralPath $DaemonJsonPath -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if (-not $Cfg -or -not $Cfg.port) { return $Ports }
+        $Port = 0
+        if (-not [int]::TryParse(([string]$Cfg.port), [ref]$Port)) { return $Ports }
+        if ($Port -lt 1 -or $Port -gt 65535 -or $Ports -contains $Port) { return $Ports }
+        $Ports += $Port
+    } catch {
+        return $Ports
+    }
+    return $Ports
+}
+
 # 4. Flush active cookies & storage and gracefully close browser via CDP before stopping processes.
 #    The Stop-Process sweep below terminates EVERY ego daemon, including a stale one still
 #    sitting on the other port pair (9772 vs 9774). Flushing only the port we are about to
@@ -156,6 +179,11 @@ if (-not $Restart) {
 #    lose the cookie / storage state the user just created there. So flush both default ports
 #    before the sweep; -AltPort still gets its 9774 flush from this same list.
 foreach ($FlushPort in @(9772, 9774)) {
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$FlushPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
+}
+# daemon.json may point the running daemon at a custom port; the sweep below kills it too.
+$ConfiguredFlushPorts = @(Get-FlushPorts -DaemonJsonPath (Join-Path $DataDir "daemon.json") | Where-Object { $_ -ne 9772 -and $_ -ne 9774 })
+foreach ($FlushPort in $ConfiguredFlushPorts) {
     try { Invoke-RestMethod -Uri "http://127.0.0.1:$FlushPort/flush-and-close" -TimeoutSec 3 | Out-Null } catch {}
 }
 Start-Sleep -Milliseconds 1000

@@ -164,7 +164,7 @@ async function main() {
 
   if (sub === 'start' || sub === '--start') { process.exitCode = runLauncher('start', argv.slice(1)); return; }
   if (sub === 'headed' || sub === '--headed' || sub === '-Headed') { process.exitCode = runLauncher('headed', argv.slice(1)); return; }
-  if (sub === 'restart' || sub === '--restart') { process.exitCode = runLauncher('restart', argv.slice(1)); return; }
+  if (sub === 'restart' || sub === '--restart' || sub === '-Restart') { process.exitCode = runLauncher('restart', argv.slice(1)); return; }
   if (sub === 'stop' || sub === '--stop') { process.exitCode = runLauncher('stop', argv.slice(1)); return; }
   if (sub === 'nodejs') return runNodeJs(argv.slice(1));
   if (sub === 'status' || sub === 'spaces') {

@@ -165,8 +165,22 @@ async function main() {
     else console.log('See https://github.com/YourheroBOB/tp-browser/blob/main/skills/tp-browser/SKILL.md');
     return;
   }
-  if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
-  console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
+  if (sub === 'version' || sub === '--version' || sub === '-V') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
+  if (sub === 'help' || sub === '--help' || sub === '-h') { console.log(usageText()); return; }
+  // 未知子命令（打錯字、拼錯的旗標，例如 `tp-browser statsu`）：舊寫法與 `help` 共用同一個
+  // console.log，把 usage 印到 stdout 後以 exit 0 結束。自動化（`tp-browser statsu && next`、
+  // CI、Agent shell）因此把「這個指令根本不存在」當成執行成功，後續才在拿不到輸出時另外除錯。
+  // 這裡把「使用者明確要求說明」與「指令無法辨識」分成兩條路：
+  //   help/--help/-h/無參數 → usage 到 stdout、exit 0（維持原行為）
+  //   其他未知值            → usage 到 stderr、exit 2
+  // 訊息只含使用者自己輸入的子命令字串，不帶環境變數、路徑或其他內容。
+  console.error(usageText());
+  console.error(`tp-browser: unknown command "${sub}" (see: tp-browser help)`);
+  process.exitCode = 2;
+}
+
+function usageText() {
+  return `TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
   tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc (auto-starts if needed)
   tp-browser start                  start headless background browser (alias: tp-start / ego-start)
@@ -176,7 +190,7 @@ usage:
   tp-browser spaces                 list task spaces
   tp-browser doctor                 diagnose and print fix commands
   tp-browser skill                  print the AI Agent SKILL.md guide
-  tp-browser version                print version and platform build`);
+  tp-browser version                print version and platform build`;
 }
 
 function daemonPath() { return join(dirname(dirname(fileURLToPath(import.meta.url))), 'daemon', 'ego-browserd.js'); }

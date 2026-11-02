@@ -47,7 +47,11 @@ function toCookieParam(c) {
     httpOnly: Boolean(c.httpOnly),
     expires,
   };
-  if (!isHostPrefix && c.domain) {
+  // hostOnly cookies must omit Domain. CDP treats an explicit domain as a
+  // domain cookie (sent to every subdomain). syncVaultNow rewrites session
+  // cookies through here, and restoreVaultToBrowser replays the vault the
+  // same way. __Host- already omits domain; missing hostOnly keeps the old path.
+  if (!isHostPrefix && c.domain && !c.hostOnly) {
     param.domain = c.domain;
   }
   if (c.sameSite && ['Strict', 'Lax', 'None'].includes(c.sameSite)) {

@@ -428,6 +428,7 @@ async function dispatch(method, p) {
       }
       let deleted = false;
       if (keep.length === 0) { store.deleteSpace(sp.id); deleted = true; }
+      else { for (const label of closed) store.removePage(sp.id, label); }
       return { retained: keep, closed, deleted };
     }
     case 'space.tabs': {

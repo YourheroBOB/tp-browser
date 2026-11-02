@@ -233,7 +233,7 @@ export function keyDescriptor(name) {
   // 若直接拿多碼位的結果推導，會得到不存在的 code（'KeySS'）與借來的 vk（'S' = 83），
   // dispatch 出去頁面收到的是別的按鍵。這類字元沒有實體按鍵，比照其他非 ASCII 字元：
   // code 回 null、vk 用自身碼位（CharCode 仍為整數）。
-  const keyChar = upper.length === 1 ? upper : c;
+  const keyChar = [...upper].length === 1 ? upper : c;
   let code = null;
   // 只有「ASCII 字母本身」才對應到美式鍵盤上的 Key<A-Z>。少數非 ASCII 字元的大寫會落在
   // ASCII 字母上：'ı'（U+0131）→ 'I'、'ſ'（U+017F）→ 'S'。沿用 keyChar 推導會讓這類字元

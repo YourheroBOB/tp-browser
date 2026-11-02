@@ -270,7 +270,32 @@ function thrownStack(value) {
   }
 }
 
+// `tp-browser nodejs` 的參數驗證，必須在「連線 daemon／啟動啟動器」之前完成。
+// 舊寫法只判斷 `args[0] === '-e'` 就直接取 `args[1]`：shell 引號漏掉或變數展開失敗時
+// （`tp-browser nodejs -e`、`tp-browser nodejs --eval '...'`）會掉進 stdin 分支，
+// stdin 立刻 EOF ⇒ 執行空腳本 ⇒ 回報 exit 0，呼叫端因此誤判「任務已執行」；
+// 而且過程中 ensureRunning 還會先把瀏覽器啟動器拉起來，白白開了一個瀏覽器。
+// 非旗標的第一個參數維持舊行為（忽略並從 stdin 讀），避免破壞既有呼叫方式。
+function validateNodeJsArgs(args) {
+  const first = args[0];
+  if (first === undefined) return; // 走 stdin／heredoc 路徑，與以往完全相同
+  if (first === '-e') {
+    if (args.length < 2 || typeof args[1] !== 'string') {
+      console.error("tp-browser nodejs: -e requires a script string, e.g. tp-browser nodejs -e 'console.log(1)'");
+      console.error('tp-browser nodejs: nothing was executed; no daemon or browser was started.');
+      process.exit(2);
+    }
+    return;
+  }
+  if (typeof first === 'string' && first.startsWith('-')) {
+    console.error(`tp-browser nodejs: unknown option ${first} (only -e is supported)`);
+    console.error('tp-browser nodejs: usage: tp-browser nodejs -e "code"  |  tp-browser nodejs < script.js');
+    process.exit(2);
+  }
+}
+
 async function runNodeJs(args) {
+  validateNodeJsArgs(args);
   let code = null;
   if (args[0] === '-e') code = args[1];
   else {

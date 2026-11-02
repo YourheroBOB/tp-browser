@@ -105,7 +105,12 @@
     }
     if (sel.startsWith('text=') && sel.includes('>> nth=')) {
       const [a, b] = sel.split('>>');
-      return { kind: 'text', value: a.slice(5).trim(), exact: false, nth: parseInt(b.replace('nth=', '').trim(), 10) };
+      // `>> nth=abc` used to become NaN, which applyNth() silently turned into "0 matches,
+      // error null" — a typo was indistinguishable from a page that has no such element.
+      // Same contract as the other selector kinds: bad input is reported, never guessed.
+      const nth = parseInt(b.replace('nth=', '').trim(), 10);
+      if (!Number.isInteger(nth)) return { kind: 'invalid' };
+      return { kind: 'text', value: a.slice(5).trim(), exact: false, nth };
     }
     if (sel.startsWith('text=')) {
       const t = sel.slice(5);
@@ -116,7 +121,20 @@
       const rest = sel.slice(9);
       const mm = rest.match(/^([A-Za-z]+)(?:\[(.+)\])?$/);
       if (!mm) return { kind: 'invalid' };
-      return { kind: 'role', role: mm[1].toLowerCase(), nameSpec: mm[2] || null };
+      const nameSpec = mm[2] || null;
+      // The aria-name filter has to be validated here, before matching. Left unchecked it
+      // degraded silently in two different directions: `[name=Save]` (unquoted) or a broken
+      // quote matched nothing while reporting no error, and `[name*=""]` matched *every*
+      // element of that role because String#includes('') is always true — a single match then
+      // gave resolve() a handle and the caller clicked/filled an arbitrary element.
+      // Same contract as `text=` / `:has-text()` / `loc=href:`: bad input is reported as an
+      // invalid selector, never guessed.
+      if (nameSpec !== null) {
+        const nm = nameSpec.match(/^name(\*)?=("((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')$/);
+        if (!nm) return { kind: 'invalid' };
+        if (!norm(nm[3] !== undefined ? nm[3] : nm[4])) return { kind: 'invalid' };
+      }
+      return { kind: 'role', role: mm[1].toLowerCase(), nameSpec };
     }
     if (sel.startsWith('loc=css:')) return { kind: 'css', value: sel.slice(8) };
     if (sel.startsWith('css:')) return { kind: 'css', value: sel.slice(4) };
@@ -126,7 +144,14 @@
     if (sel.startsWith('css=')) {
       let body = sel.slice(4); let nth = null;
       const ni = body.lastIndexOf('>> nth=');
-      if (ni !== -1) { nth = parseInt(body.slice(ni + 7), 10); body = body.slice(0, ni).trim(); }
+      if (ni !== -1) {
+        nth = parseInt(body.slice(ni + 7), 10);
+        // Empty / non-numeric index (`css=div >> nth=`) became NaN, and applyNth() rejects
+        // NaN by returning [] — so a malformed selector looked like "element not found"
+        // instead of an input error, and the caller could only wait for a timeout.
+        if (!Number.isInteger(nth)) return { kind: 'invalid' };
+        body = body.slice(0, ni).trim();
+      }
       const hi = body.search(/:has-text\(|:text-is\(/);
       if (hi !== -1) {
         const cssPart = body.slice(0, hi);

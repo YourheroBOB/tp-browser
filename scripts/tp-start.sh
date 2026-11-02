@@ -122,6 +122,26 @@ if [ -z "$BROWSER_BIN" ] || [ ! -x "$BROWSER_BIN" ]; then
   exit 1
 fi
 
+# A valid browser binary is only half of what this script launches. The daemon
+# JS (and node itself) are just as necessary, but they used to be validated only
+# *implicitly* — by spawning them and polling /health for 10 seconds. Because the
+# flush + pkill sweep runs first, a broken/partial install (scripts copied
+# without daemon/, or an APP_DIR that has no daemon/ego-browserd.js) killed the
+# browser the user already had running, then spent 10s polling and finally died
+# with a bare TP_NOT_READY that named no cause. Check the rest of the runtime
+# here, before anything is flushed, stopped or launched.
+if [ ! -f "$DAEMON_JS" ]; then
+  echo "ERROR: daemon script not found at '$DAEMON_JS'." >&2
+  echo "       Re-run ./install.sh (or start tp-start.sh from the repo checkout)." >&2
+  echo "       Nothing was flushed, stopped or launched." >&2
+  exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node not found in PATH (tp-browser requires Node.js >= 22)." >&2
+  echo "       Nothing was flushed, stopped or launched." >&2
+  exit 1
+fi
+
 # Only flush and stop existing instances after a browser executable is available.
 #
 # The sweep below (pkill -f ego-browserd.js / tp-browserd.js / $PROFILE_DIR) does

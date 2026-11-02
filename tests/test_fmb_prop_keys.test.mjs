@@ -225,11 +225,11 @@ test('K2+K3 性質：隨機組合的合法 chord 全部可解析且不變量成�
   }
 });
 
-test('K3 已知產品瑕疵：isModifier 以 in 運算子查表，原型鍵名會被誤判為修飾鍵', { skip: 'daemon/keys.js 的 `name in MODIFIERS` 會命中原型鏈；修正需改既有原始碼（本輪任務禁止）。' }, () => {
+test('K3 回歸：isModifier／modifierBit 只認 MODIFIERS 自有鍵，原型鍵名不是修飾鍵', () => {
   // 期望行為：任何非表中自有的鍵名都應被視為非修飾鍵。
   assert.equal(isModifier('toString'), false);
   assert.equal(isModifier('constructor'), false);
   assert.equal(isModifier('hasOwnProperty'), false);
   assert.equal(modifierBit('toString'), 0);
-  // 目前實作下 isModifier('toString') === true、modifierBit('toString') 回傳函式而非 0。
+  // daemon/keys.js 已改用 null-prototype 表＋Object.hasOwn，本測試防止回退。
 });

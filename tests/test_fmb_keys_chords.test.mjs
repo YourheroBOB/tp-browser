@@ -88,9 +88,6 @@ test('parseChord：非法 chord 丟出可讀錯誤（不吞錯、不亂猜）', 
 
 test(
   'parseChord／isModifier 應把原型鏈屬性視為未知修飾詞',
-  {
-    skip: '產品 bug（daemon/keys.js）：isModifier() 使用 `in` 檢查，Object.prototype 上的 constructor／toString／valueOf 等名稱會被誤判為合法修飾詞，parseChord("constructor+a") 因此靜默接受、modifierBit 回 0。待修正為 Object.hasOwn／null-prototype 表後移除 skip。',
-  },
   () => {
     assert.throws(() => parseChord('constructor+a'), /unknown modifier/);
     assert.equal(isModifier('toString'), false);

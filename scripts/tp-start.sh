@@ -78,8 +78,15 @@ if [ "$RESTART" -eq 0 ]; then
       echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s))"
       exit 0
     else
-      # If already running in headed mode (no --headless in process args), preserve open window & tabs!
-      if ps ax -o command= 2>/dev/null | grep "$PROFILE_DIR" | grep -v grep | grep -qv -- "--headless"; then
+      # Already headed only when some process is bound to this profile and none
+      # of those processes carries --headless. Preserve that window and its tabs.
+      # grep -F: PROFILE_DIR contains ".local"; as a regex the "." matches any
+      # character and can latch onto an unrelated process.
+      # `grep -qv -- --headless` is the wrong test: Chrome gpu/zygote/utility
+      # children keep --user-data-dir but drop --headless, so a headless browser
+      # still has a matching line and the headless→headed switch never ran.
+      _profile_procs="$(ps ax -o command= 2>/dev/null | grep -F -- "$PROFILE_DIR" | grep -v grep || true)"
+      if [ -n "$_profile_procs" ] && ! printf '%s\n' "$_profile_procs" | grep -q -- "--headless"; then
         echo "TP_READY (port=$DAEMON_PORT, chrome=$CHROME_PORT, os=$(uname -s), mode=headed)"
         exit 0
       fi

@@ -121,29 +121,39 @@ if (-not ([string]::IsNullOrWhiteSpace($BrowserBin))) {
 }
 $TargetExeName = Split-Path $BrowserBin -Leaf
 
+# Interactive (visible) browser windows that belong to this profile. The marker flag is
+# only ever passed in -Headed mode, so it cleanly separates "the user is looking at a GUI
+# window" from the headless background browser.
+function Get-HeadedBrowserProc([string]$ExeName) {
+    @(Get-CimInstance Win32_Process | Where-Object {
+        ($_.Name -ieq $ExeName) -and
+        ($_.CommandLine -like "*ego-linux*profile-agent*") -and
+        ($_.CommandLine -like "*--tp-interactive-gui=1*") -and
+        ($_.CommandLine -notlike "*--headless*") -and
+        ($_.SessionId -ge 1)
+    })
+}
+
 # 3. Check if already healthy on target port (preserve existing interactive headed desktop browser if -Headed and not -Restart)
 if (-not $Restart) {
     try {
         $h = Invoke-RestMethod -Uri "http://127.0.0.1:$DaemonPort/health" -TimeoutSec 2
         $cv = Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/version" -TimeoutSec 2
         if ($h.ok -and $h.chrome -and $cv.'User-Agent' -match 'Windows') {
-            if (-not $Headed -and -not $Edge -and -not $Chrome) {
+            $HeadedProc = @(Get-HeadedBrowserProc -ExeName $TargetExeName)
+            if ($Headed -and $HeadedProc.Count -gt 0) {
+                $tabs = @(Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/list" -TimeoutSec 2 | Where-Object { $_.type -eq 'page' } | ForEach-Object { $_.title })
+                Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser), exe=$TargetExeName, pid=$($HeadedProc[0].ProcessId), session=$($HeadedProc[0].SessionId), mode=headed)"
+                Write-Output "TP_INDICATORS: [1] Tab Title Prefix: ⚡[TP] | [2] Top 4px Gold-Green Strip | [3] Bottom-Right ⚡ TooPower Capsule | Active Tabs: $($tabs -join ' ; ')"
+                exit 0
+            }
+            # A plain `ego-start` asks for the background headless mode. A visible GUI
+            # browser on the same profile must NOT be reused: STATE.md documents
+            # `ego-headed` then `ego-start` as the way back to headless, and reusing the
+            # window leaves it fighting for focus while the agent drives a GUI browser.
+            if (-not $Headed -and -not $Edge -and -not $Chrome -and $HeadedProc.Count -eq 0) {
                 Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser))"
                 exit 0
-            } elseif ($Headed) {
-                $HeadedProc = @(Get-CimInstance Win32_Process | Where-Object {
-                    ($_.Name -ieq $TargetExeName) -and
-                    ($_.CommandLine -like "*ego-linux*profile-agent*") -and
-                    ($_.CommandLine -like "*--tp-interactive-gui=1*") -and
-                    ($_.CommandLine -notlike "*--headless*") -and
-                    ($_.SessionId -ge 1)
-                })
-                if ($HeadedProc.Count -gt 0) {
-                    $tabs = @(Invoke-RestMethod -Uri "http://127.0.0.1:$ChromePort/json/list" -TimeoutSec 2 | Where-Object { $_.type -eq 'page' } | ForEach-Object { $_.title })
-                    Write-Output "EGO_READY (port=$DaemonPort, chrome=$ChromePort, browser=$($cv.Browser), exe=$TargetExeName, pid=$($HeadedProc[0].ProcessId), session=$($HeadedProc[0].SessionId), mode=headed)"
-                    Write-Output "TP_INDICATORS: [1] Tab Title Prefix: ⚡[TP] | [2] Top 4px Gold-Green Strip | [3] Bottom-Right ⚡ TooPower Capsule | Active Tabs: $($tabs -join ' ; ')"
-                    exit 0
-                }
             }
         }
     } catch {}

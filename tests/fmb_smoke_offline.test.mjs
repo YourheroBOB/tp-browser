@@ -2,20 +2,23 @@
 // No real HOME, no 9772/9774, no Chrome, no external services.
 // Daemon, in-page agent, and profile-init are syntax-checked only so listen()
 // or a profile copy cannot run.
+// Every first-party .js/.mjs is also parse-checked; symlinks are skipped.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Store } from '../daemon/store.js';
 import { buildPlan } from '../fmb_feature2/cli.js';
@@ -173,6 +176,21 @@ function minSpace() {
   };
 }
 
+function listSourceFiles(dir, acc = []) {
+  for (const name of readdirSync(dir)) {
+    if (name === 'node_modules' || name === '.git') continue;
+    const full = join(dir, name);
+    const st = lstatSync(full);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      listSourceFiles(full, acc);
+      continue;
+    }
+    if (st.isFile() && (name.endsWith('.js') || name.endsWith('.mjs'))) acc.push(full);
+  }
+  return acc;
+}
+
 describe('tp-browser offline smoke', { concurrency: false }, () => {
   test.after(() => {
     rmSync(home, { recursive: true, force: true });
@@ -199,6 +217,24 @@ describe('tp-browser offline smoke', { concurrency: false }, () => {
       const checked = spawnSync(process.execPath, ['--check', abs], { encoding: 'utf8' });
       assert.equal(checked.status, 0, `${rel}\n${checked.stderr}`);
     }
+  });
+
+  test('first-party JavaScript modules parse with node --check', { timeout: 120_000 }, () => {
+    const files = listSourceFiles(root);
+    assert.ok(files.length >= 10, `expected many js modules, found ${files.length}`);
+    const failures = [];
+    for (const file of files) {
+      const result = spawnSync(process.execPath, ['--check', file], {
+        encoding: 'utf8',
+        timeout: 20000,
+        env: childEnv(),
+      });
+      if (result.status !== 0) {
+        const text = `${result.stderr || ''}${result.stdout || ''}`.trim().slice(0, 400);
+        failures.push(`${relative(root, file)}: ${text || result.error?.message || 'check failed'}`);
+      }
+    }
+    assert.deepEqual(failures, []);
   });
 
   test('posix entry scripts pass sh -n', () => {
@@ -244,6 +280,9 @@ describe('tp-browser offline smoke', { concurrency: false }, () => {
     const saved = JSON.parse(readFileSync(file, 'utf8'));
     assert.equal(saved.nextSpaceId, space.id + 1);
     assert.equal(saved.spaces[String(space.id)].name, 'smoke');
+    store.deleteSpace(space.id);
+    assert.equal(store.list().length, 0);
+    assert.equal(store.get(space.id), null);
   });
 
   test('reaper and buildPlan keep an empty live set untouched', () => {
@@ -252,6 +291,7 @@ describe('tp-browser offline smoke', { concurrency: false }, () => {
     const plan = planReap({ spaces: [minSpace()], liveTargetIds: [], now: NOW });
     assert.equal(plan.reason, 'no-live-targets');
     assert.deepEqual(plan.closeSpaces, []);
+    assert.deepEqual(plan.dropPages, []);
     const applied = applyReapPlan({
       deleteSpace() { throw new Error('deleteSpace should not run'); },
       removePage() { throw new Error('removePage should not run'); },
@@ -264,6 +304,9 @@ describe('tp-browser offline smoke', { concurrency: false }, () => {
     }));
     assert.equal(viaCli.reason, 'no-live-targets');
     assert.deepEqual(viaCli.closeSpaces, []);
+    const emptyViaCli = buildPlan('{"spaces":[],"liveTargetIds":[]}');
+    assert.equal(emptyViaCli.reason, 'no-live-targets');
+    assert.equal(emptyViaCli.stats.examined, 0);
   });
 
   test('reaper cli prints usage and a minimal plan', () => {
@@ -275,6 +318,7 @@ describe('tp-browser offline smoke', { concurrency: false }, () => {
     const empty = run(['fmb_feature2/cli.js'], { input: '' });
     assert.equal(empty.status, 2, detail(empty));
     assert.match(empty.stderr, /usage: node fmb_feature2\/cli\.js/);
+    assert.equal((empty.stdout || '').trim(), '');
 
     const ok = run(['fmb_feature2/cli.js'], { input: `${payload}\n` });
     assert.equal(ok.status, 0, detail(ok));

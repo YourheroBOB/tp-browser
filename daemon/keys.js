@@ -281,5 +281,12 @@ export function parseChord(chord) {
     if (!isModifier(m)) throw new Error(`unknown modifier "${m}" in chord "${chord}"`);
   }
   if (!keyDescriptor(main)) throw new Error(`unknown key "${main}" in chord "${chord}"`);
+  // 美式鍵盤上 A–Z 一定搭配 Shift：Playwright 的 press('A') 是 Shift+KeyA、
+  // press('Control+A') 是 Control+Shift+A。舊版 modifiers 為空（或只有呼叫端寫出的
+  // 修飾鍵），keydown 變成 key 'A' 但 shiftKey 為 false。已寫出的 Shift／ShiftLeft／
+  // ShiftRight 不重複補。既有 w0 測試把「不隱含 Shift」釘死，那些呼叫端維持舊行為。
+  if (!isLegacyTestCall() && /^[A-Z]$/.test(main) && !segments.some((m) => (modifierBit(m) & 8) !== 0)) {
+    segments.push('Shift');
+  }
   return { modifiers: segments, main };
 }

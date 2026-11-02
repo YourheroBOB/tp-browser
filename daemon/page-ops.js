@@ -415,8 +415,18 @@ export class BrowserHub {
         const p = toCookieParam(c);
         if (p) params.push(p);
       }
-      if (params.length > 0) {
+      if (params.length === 0) return;
+      try {
         await this.cdp.send('Storage.setCookies', { cookies: params });
+        return;
+      } catch {
+        // CDP 的 Storage.setCookies 是「依序寫入、遇到第一筆不合法的 cookie 就中止」：
+        // 排在它後面的合法 cookie 全部寫不進去。外層原本是空 catch，錯誤被完全吞掉，
+        // 使用者實際看到的症狀是重啟後「一整票網站」同時被登出，且沒有任何線索。
+        // 退回逐筆寫入：壞的那筆只影響它自己，其餘登入態照樣還原。
+      }
+      for (const p of params) {
+        await this.cdp.send('Storage.setCookies', { cookies: [p] }).catch(() => {});
       }
     } catch {}
   }

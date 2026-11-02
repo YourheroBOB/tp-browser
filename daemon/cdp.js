@@ -200,6 +200,19 @@ export class Cdp {
   close() {
     this.closed = true;
 
+    // 同步拒絕所有 in-flight 請求，不能只把收拾工作交給 ws.onclose。本地 close() 之後
+    // 對端不一定會（立刻）回 close frame：socket 已半死、關閉握手卡住、或實作要等到
+    // 內部關閉逾時才 fire onclose。這段空窗期內每個未完成的 send() 都要一路等到自己的
+    // timeout（預設 30 秒）才失敗，呼叫端因此卡住、計時器把事件迴圈多撐住、pending
+    // 也繼續留在 Map 裡。先清空 Map 再 reject，晚到的 onclose 只會看到空集合，
+    // 不會重複拒絕；連 close() 被重複呼叫也是安全 no-op。
+    const inFlight = [...this.pending.values()];
+    this.pending.clear();
+    for (const p of inFlight) {
+      clearTimeout(p.timer);
+      p.reject(new Error('CDP connection closed'));
+    }
+
     const handshaking = [...this.connectSockets];
     this.connectSockets.clear();
     const rejects = [...this.connectRejects];

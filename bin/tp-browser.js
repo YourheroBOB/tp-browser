@@ -304,9 +304,23 @@ function thrownStack(value) {
 // 驗證邏輯抽成純函式：不印訊息、不 process.exit、不碰網路。
 // 這樣測試就能直接 import 逐條驗證每個分支（含「不該誤擋」的反向案例），
 // 不必為每一種輸入都啟動一個子程序；真正的入口 validateNodeJsArgs() 只負責印訊息與退出。
-export function nodeJsArgsError(args) {
+export function nodeJsArgsError(args, stdinText) {
   const first = args[0];
-  if (first === undefined) return null; // 走 stdin／heredoc 路徑，與以往完全相同
+  // 沒有 -e（無參數，或第一個參數不是旗標）代表腳本來自 stdin／heredoc。
+  // 還沒讀到本文時 stdinText 不是字串，維持舊行為：先放行，由呼叫端去讀 stdin。
+  // 讀到本文之後，空字串／只有 BOM／空白必須在 ensureRunning() 之前擋下，
+  // 否則 `tp-browser nodejs < /dev/null` 會拉起瀏覽器並以 exit 0 結束。
+  // CLI 只在「完全沒有參數」時套用這個空腳本結果；非旗標位置參數要維持舊行為
+  // （忽略該參數、照讀 stdin，空的也繼續連線），不能在驗證階段被當成非法選項。
+  if (first === undefined || (typeof first === 'string' && !first.startsWith('-'))) {
+    if (typeof stdinText === 'string' && stdinText.replace(/^\uFEFF/, '').trim() === '') {
+      return [
+        'tp-browser nodejs: the script from stdin is empty (only BOM/whitespace); nothing was executed.',
+        "tp-browser nodejs: pass real code, e.g. tp-browser nodejs -e 'console.log(1)'  |  tp-browser nodejs < script.js",
+      ];
+    }
+    return null;
+  }
   if (first === '-e') {
     if (args.length < 2 || typeof args[1] !== 'string') {
       return [
@@ -334,8 +348,8 @@ export function nodeJsArgsError(args) {
   return null;
 }
 
-function validateNodeJsArgs(args) {
-  const lines = nodeJsArgsError(args);
+function validateNodeJsArgs(args, stdinText) {
+  const lines = nodeJsArgsError(args, stdinText);
   if (!lines) return;
   for (const line of lines) console.error(line);
   process.exit(2);
@@ -359,6 +373,12 @@ async function runNodeJs(args) {
     });
   }
   code = String(code || '').replace(/^\uFEFF/, '');
+  // -e 的空白腳本已在進入這裡之前擋掉。完全沒有參數時，腳本只來自 stdin／heredoc，
+  // 空內容（只含 BOM／空白）要在 ensureRunning() 之前擋下，避免
+  // `tp-browser nodejs < /dev/null` 拉起瀏覽器並以 exit 0 結束。
+  // 非旗標位置參數維持舊行為：忽略該參數、照讀 stdin，即使是空的也繼續連線 daemon，
+  // 不能在驗證階段退出，否則會被誤判成非法選項。
+  if (args[0] === undefined) validateNodeJsArgs(args, code);
 
   const { port, h } = await ensureRunning();
   if (!h || !h.ok) {

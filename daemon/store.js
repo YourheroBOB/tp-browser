@@ -7,8 +7,13 @@ import { dirname } from 'node:path';
 // 若不修正就進 create()：`undefined++`／`'x'++` 會算出 NaN 並把新空間寫進 "NaN" 鍵；
 // `nextSpaceId` 落後時則會直接覆蓋既有空間（id 重用）。因此在載入後把
 // nextSpaceId 正規化成「大於所有既有 space id 的正整數」。
+// 同樣地，ledger 也可能整塊缺少 labelSeq（舊版 schema），或它是 null／陣列／純量。
+// nextLabel 已防禦性處理缺少 labelSeq（`this.data.labelSeq ?? (this.data.labelSeq = {})`），
+// 但 create() 直接 `this.data.labelSeq[id] = 1`：缺欄位時會在建立新空間的當下拋
+// TypeError——daemon 雖然載入得到既有空間，卻再也開不了新 TaskSpace。labelSeq 為 null／
+// 純量會直接拋錯，為陣列則寫出畸形資料。因此載入後一併把 labelSeq 正規化成一般物件。
 // 註：刻意不新增 Store 的 prototype 方法，避免破壞 Store.prototype 的公開介面契約。
-function normalizeNextSpaceId(data) {
+function normalizeLedger(data) {
   if (data === null || typeof data !== 'object') return;
   const spaces = data.spaces;
   const ids = spaces !== null && typeof spaces === 'object' && !Array.isArray(spaces)
@@ -17,6 +22,10 @@ function normalizeNextSpaceId(data) {
   const maxId = ids.length > 0 ? Math.max(...ids) : 0;
   const current = data.nextSpaceId;
   if (!Number.isInteger(current) || current < 1 || current <= maxId) data.nextSpaceId = maxId + 1;
+
+  // labelSeq 只補成一般物件；各空間的序號內容交給 nextLabel 的既有邏輯維護。
+  const seq = data.labelSeq;
+  if (seq === null || typeof seq !== 'object' || Array.isArray(seq)) data.labelSeq = {};
 }
 
 // `__proto__` 是 Object.prototype 上的存取器：`obj['__proto__'] = page` 不會建立自有鍵，
@@ -50,7 +59,7 @@ export class Store {
         throw new Error(`ledger root is not an object (got ${Array.isArray(parsed) ? 'array' : typeof parsed})`);
       }
       this.data = parsed;
-      normalizeNextSpaceId(this.data);
+      normalizeLedger(this.data);
     } catch (e) {
       // 降級成空 ledger 之前，先把無法解析或根節點不合法的原檔原樣複製成
       // `${file}.corrupt-<timestamp>`：否則下一個 persist() 會把原檔直接覆寫成空 ledger，

@@ -79,7 +79,27 @@ function isPlainObject(value) {
 // failed replacement. Deleting them before the copy means a copy that fails afterwards (locked
 // file, EACCES, ENOSPC, destination is a directory) silently throws away those writes — for
 // Cookies that is exactly the un-checkpointed login state. Stage the copy next to the
-// destination, rename it into place, and only drop the sidecars once the rename really succeeded.
+// destination, rename it into place, and only touch the destination sidecars once the rename
+// really succeeded (see `copySqliteSidecars` for what replaces them).
+// A database is only complete together with the sidecars the *source* still holds: a hot
+// `-journal` is the rollback log of a transaction whose pages may already sit in the copied main
+// file, and `-wal` holds commits that were never checkpointed. Replacing the main file alone
+// therefore imports a DB that is missing exactly the newest rows — for Cookies / Login Data that is
+// the login the user just created — and, with an open write transaction, one whose uncommitted
+// pages no longer have a journal left to undo them. `-shm` is only a shared-memory index that
+// SQLite rebuilds from the WAL, so it is dropped instead of copied.
+function copySqliteSidecars(srcPath, dstPath) {
+  try { if (existsSync(dstPath + '-shm')) unlinkSync(dstPath + '-shm'); } catch {}
+  for (const ext of ['-journal', '-wal']) {
+    const to = dstPath + ext;
+    try { if (existsSync(to)) unlinkSync(to); } catch {}
+    const from = srcPath + ext;
+    try {
+      if (existsSync(from) && statSync(from).size > 0) copyFileSync(from, to);
+    } catch {}
+  }
+}
+
 function replaceSqliteFile(srcPath, dstPath) {
   const tmp = `${dstPath}.fmb-sync-tmp`;
   try {
@@ -89,9 +109,7 @@ function replaceSqliteFile(srcPath, dstPath) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
     throw err;
   }
-  for (const ext of ['-journal', '-wal', '-shm']) {
-    try { if (existsSync(dstPath + ext)) unlinkSync(dstPath + ext); } catch {}
-  }
+  copySqliteSidecars(srcPath, dstPath);
 }
 
 // Directory-sized browser state must never be copied file-by-file into a live destination.
@@ -351,9 +369,9 @@ if (bestCandidate) {
         }
         // The rename succeeded, so `dstCookies` is now the freshly copied database and the old
         // sidecars describe a DB that no longer exists — dropping them here cannot lose anything.
-        for (const ext of ['-journal', '-wal', '-shm']) {
-          try { if (existsSync(dstCookies + ext)) unlinkSync(dstCookies + ext); } catch {}
-        }
+        // Then bring the source's not-yet-checkpointed writes (`-wal` / hot `-journal`) along, or
+        // the import silently drops every cookie the source browser wrote after its last checkpoint.
+        copySqliteSidecars(srcCookies, dstCookies);
         console.log(`Synced Cookies (${Math.round(fileSize(srcCookies) / 1024)} KB) + Local State os_crypt from: ${srcCookies}`);
       } catch {
         for (const tmp of [tmpCookies, tmpLocalState]) {

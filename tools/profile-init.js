@@ -264,7 +264,13 @@ if (bestCandidate) {
   const loginDstOsCrypt = readSourceOsCrypt(join(profileRoot, 'Local State'));
   const loginSrcKey = loginSrcOsCrypt ? loginSrcOsCrypt.encrypted_key : null;
   const loginDstKey = loginDstOsCrypt ? loginDstOsCrypt.encrypted_key : null;
-  const loginKeysConflict = loginSrcKey !== null && loginDstKey !== null && loginSrcKey !== loginDstKey;
+  // Destination already has a key and the source has none: Login Data / Web Data
+  // copied below would stay encrypted for a key that is never installed (Cookies
+  // sync also bails out without a source os_crypt). Treat that like two different
+  // keys and keep the destination files.
+  const loginKeysConflict =
+    (loginSrcKey !== null && loginDstKey !== null && loginSrcKey !== loginDstKey) ||
+    (loginSrcKey === null && loginDstKey !== null);
 
   // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
   for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {

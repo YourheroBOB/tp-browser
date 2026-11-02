@@ -132,10 +132,14 @@ async function ensureRunning() {
   let port = readPort();
   let h = await health(port);
   if (h && h.ok && h.chrome) return { port, h };
-  runLauncher('start', [], true);
+  // 啟動器的退出碼一定要往上傳。舊寫法把 runLauncher() 的回傳值直接丟掉，於是
+  // 「瀏覽器根本沒起來」（未安裝 Chrome/Chromium、profile 損壞、埠被占用、腳本不存在…）
+  // 在下游被一律改寫成「tp-browserd is not reachable … 請先執行 tp-start」＋ exit 2：
+  // 使用者被叫去重跑一個剛剛才失敗的指令，自動化也拿不到真正的失敗碼。
+  const launcherExit = runLauncher('start', [], true);
   port = readPort();
   h = await health(port);
-  return { port, h };
+  return { port, h, launcherExit };
 }
 
 async function main() {
@@ -342,8 +346,14 @@ async function runNodeJs(args) {
     process.exit(2);
   }
 
-  const { port, h } = await ensureRunning();
+  const { port, h, launcherExit } = await ensureRunning();
   if (!h || !h.ok) {
+    // 啟動器已明確失敗（非 0）時，真正的原因剛被它印在 stderr 上。此時要照實回報
+    // 並沿用啟動器的退出碼，而不是吞掉它、改喊「daemon 連不上」再叫使用者重跑 tp-start。
+    if (launcherExit) {
+      console.error(`tp-browser: failed to start the browser (launcher exited with code ${launcherExit}); see the launcher messages above.`);
+      process.exit(Number.isInteger(launcherExit) && launcherExit > 0 && launcherExit < 256 ? launcherExit : 1);
+    }
     console.error(`tp-browserd is not reachable on 127.0.0.1:${port}.`);
     console.error('Start TooPower Browser first:  tp-start  (or: tp-headed)');
     process.exit(2);

@@ -202,9 +202,31 @@ async function rpcCmd(port, method, params) {
     headers: { 'content-type': 'application/json', 'x-tp-token': tok, 'x-ego-token': tok },
     body: JSON.stringify({ id: 1, method, params: params || {} }),
   });
-  const j = await res.json();
-  if (!j.ok) throw new Error(`${j.error?.name}: ${j.error?.message}`);
-  return j.result;
+  // fetch() 只在「網路層」失敗時拋錯；HTTP 401／404／502 也照樣成功回傳 Response。
+  // 舊寫法直接 `await res.json()`，於是：
+  //   * 這個埠上跑的其實不是 tp-browserd（被代理、被別的服務佔用、設定錯埠），
+  //     回應是 HTML／純文字 → 使用者只看到 `Unexpected token '<'`，查不到真正原因；
+  //   * daemon 中途結束、回應 body 為空 → `Unexpected end of JSON input`，同樣無從判斷；
+  //   * 認證被拒（401 且 body 不是 JSON 或為空）也被誤報成 JSON 解析錯誤，
+  //     自動化流程因此不會有人去檢查 token 或埠號。
+  // 改成先取 HTTP 狀態與原始 body，再依序分辨「RPC 業務錯誤 → HTTP 錯誤 → 非 JSON」；
+  // 成功路徑與舊寫法完全相同（仍回傳 j.result）。
+  let text = '';
+  try { text = await res.text(); } catch { text = ''; }
+  let j = null;
+  if (text) {
+    try { j = JSON.parse(text); } catch { j = null; }
+  }
+  const envelope = j !== null && typeof j === 'object' && !Array.isArray(j);
+  if (envelope && j.ok) return j.result;
+  if (envelope && j.ok === false) throw new Error(`${j.error?.name}: ${j.error?.message}`);
+  if (!res.ok) {
+    throw new Error(`tp-browserd on 127.0.0.1:${port} answered HTTP ${res.status} for ${method}; check that this port is really served by tp-browserd`);
+  }
+  if (!envelope) {
+    throw new Error(`tp-browserd on 127.0.0.1:${port} returned a non-JSON response for ${method} (HTTP ${res.status})`);
+  }
+  throw new Error(`tp-browserd on 127.0.0.1:${port} returned a response without ok for ${method}`);
 }
 
 async function doctor() {

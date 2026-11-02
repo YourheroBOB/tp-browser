@@ -258,6 +258,16 @@
     return { els, spec };
   }
 
+  // HTMLAnchorElement.href is a string (absolute URL). An SVG <a> exposes href
+  // as an SVGAnimatedString object; returning it raw leaks a non-string into
+  // describe()/snap() output (and serializes as {"baseVal":...} instead of a
+  // URL). Prefer the string form, falling back to the href attribute.
+  const hrefOf = (el) => {
+    if (typeof el.href === 'string') return el.href || null;
+    const h = el.getAttribute && el.getAttribute('href');
+    return h || null;
+  };
+
   function describe(el) {
     const r = el.getBoundingClientRect();
     return {
@@ -266,7 +276,7 @@
       tag: el.tagName ? el.tagName.toLowerCase() : null,
       text: trunc(norm(el.textContent), 160),
       name: accessName(el),
-      href: el.href || null,
+      href: hrefOf(el),
       x: r.left, y: r.top, w: r.width, h: r.height,
       cx: r.left + r.width / 2, cy: r.top + r.height / 2,
       disabled: !!el.disabled,
@@ -342,7 +352,7 @@
       if (role !== 'root') {
         const ref = refOf(el);
         const parts = ['ref=' + ref];
-        if (role === 'anchor' && el.href) { parts.push('loc=href:' + el.href); parts.push('url=' + el.href); }
+        const _href = role === 'anchor' ? hrefOf(el) : null; if (_href) { parts.push('loc=href:' + _href); parts.push('url=' + _href); }
         if (tag === 'INPUT' && el.value) parts.push('value=' + JSON.stringify(trunc(String(el.value), 60)));
         line += ' [' + parts.join(', ') + ']';
       }

@@ -408,17 +408,39 @@ export class BrowserHub {
     } catch {}
   }
 
+  // 回傳實際寫入成功的 cookie 筆數（0 = vault 全空、全部過期，或全部被 CDP 拒絕）。
   async restoreVaultToBrowser() {
+    const params = [];
     try {
-      const params = [];
       for (const c of this.cookieVault.values()) {
         const p = toCookieParam(c);
         if (p) params.push(p);
       }
-      if (params.length > 0) {
-        await this.cdp.send('Storage.setCookies', { cookies: params });
-      }
     } catch {}
+    if (params.length === 0) return 0;
+    try {
+      await this.cdp.send('Storage.setCookies', { cookies: params });
+      return params.length;
+    } catch {}
+    // Storage.setCookies 是「一次呼叫、整批驗證」：vault 裡只要有一筆 cookie 被 Chrome
+    // 判為不合法（partitionKey、值格式、__Host- 前綴規則…），整個指令就回錯誤而被上面的
+    // 空 catch 吞掉 → 所有登入態都無聲還原失敗（且已寫入幾筆也無從得知）。
+    // 退回逐筆寫入：壞掉的只損失自己，其餘照樣還原。
+    let restored = 0;
+    let consecutiveFailures = 0;
+    for (const p of params) {
+      try {
+        await this.cdp.send('Storage.setCookies', { cookies: [p] });
+        restored++;
+        consecutiveFailures = 0;
+      } catch {
+        consecutiveFailures++;
+        // 連續多筆都失敗通常代表連線已斷（而非個別 cookie 不合法），
+        // 逐筆重試只會卡住呼叫端，直接放棄。
+        if (consecutiveFailures >= 10) break;
+      }
+    }
+    return restored;
   }
 
   async syncVaultNow() {

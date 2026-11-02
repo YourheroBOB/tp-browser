@@ -84,17 +84,47 @@ function isPlainObject(value) {
 // file, EACCES, ENOSPC, destination is a directory) silently throws away those writes — for
 // Cookies that is exactly the un-checkpointed login state. Stage the copy next to the
 // destination, rename it into place, and only drop the sidecars once the rename really succeeded.
+// The source `-journal` and `-wal` are that same uncheckpointed state. Copying only the main
+// file and then deleting the destination sidecars drops those commits (Chrome keeps Favicons
+// and Login Data in WAL mode). Carry the source journal/wal across after the main file is in
+// place. `-shm` is a disposable index and must not be reused with the new database.
 function replaceSqliteFile(srcPath, dstPath) {
   const tmp = `${dstPath}.fmb-sync-tmp`;
+  const dataExts = ['-journal', '-wal'];
+  const staged = [];
+  const removeStaged = () => {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    for (const ext of dataExts) {
+      const sideTmp = `${tmp}${ext}`;
+      try { if (existsSync(sideTmp)) unlinkSync(sideTmp); } catch {}
+    }
+  };
   try {
     copyFileSync(srcPath, tmp);
+    for (const ext of dataExts) {
+      const srcSide = srcPath + ext;
+      if (!existsSync(srcSide)) continue;
+      let st;
+      try { st = statSync(srcSide); } catch { continue; }
+      if (!st.isFile()) continue;
+      copyFileSync(srcSide, `${tmp}${ext}`);
+      staged.push(ext);
+    }
     renameSync(tmp, dstPath);
   } catch (err) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    removeStaged();
     throw err;
   }
   for (const ext of ['-journal', '-wal', '-shm']) {
     try { if (existsSync(dstPath + ext)) unlinkSync(dstPath + ext); } catch {}
+  }
+  try {
+    for (const ext of staged) {
+      renameSync(`${tmp}${ext}`, dstPath + ext);
+    }
+  } catch (err) {
+    removeStaged();
+    throw err;
   }
 }
 

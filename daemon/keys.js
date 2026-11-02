@@ -213,10 +213,19 @@ export function keyDescriptor(name) {
   }
   // 單一字元一律以 code point 判斷：'😀'.length 是 2（UTF-16 代理對），但 [...'😀'].length 是 1；
   // 舊版用 name.length === 1 會把整個 emoji 判成未知鍵（所以 parseChord('😀') 拋 unknown key）。
-  // 非字串沿用舊行為：讀 name.length（undefined／null 丟 TypeError，其餘回 null）。
-  const chars = typeof name === 'string' ? [...name] : null;
-  if (!(chars ? chars.length === 1 : name.length === 1)) return null;
-  const c = chars ? chars[0] : name;
+  // 非字串一律視為未知鍵並回 null：舊版只檢查 `name.length === 1`，於是「長度 1 但不是字串」的
+  // 輸入會直接闖進單字元分支 —— keyDescriptor(['a'])／keyDescriptor(() => {})／
+  // keyDescriptor({ length: 1 }) 丟出 `TypeError: c.toUpperCase is not a function`，
+  // keyDescriptor(new String('a')) 更回傳 key／text 都是物件的描述子（dispatch 出去是壞事件）。
+  // 同一類輸入（例如 'ab'）卻乖乖回 null，行為不一致。undefined／null 仍沿用舊契約丟
+  // TypeError（既有測試釘死），呼叫端必須先自行檢查。
+  if (typeof name !== 'string') {
+    if (name == null) throw new TypeError('keyDescriptor() requires a string key name');
+    return null;
+  }
+  const chars = [...name];
+  if (chars.length !== 1) return null;
+  const c = chars[0];
   const upper = c.toUpperCase();
   // 只採用「單一碼位」的大寫對應來推導實體鍵碼：多數單一字元的大寫是單一碼位，但
   // 'ß'.toUpperCase() 是 'SS'、'ﬀ' 是 'FF'、'ΐ' 是 'Ϊ' + 組合重音、'ǰ' 是 'J' + ˇ。
@@ -245,7 +254,11 @@ export function keyDescriptor(name) {
   return {
     key: c,
     code: legacy && c === ' ' ? null : code,
-    vk: keyChar.charCodeAt(0),
+    // vk 取「碼位」而不是 UTF-16 碼元：'😀'.charCodeAt(0) 是代理對的前半 0xD83D，落在 Unicode
+    // 保留的代理區（0xD800–0xDFFF），當成 windowsVirtualKeyCode dispatch 出去是無效值，也不符
+    // 本檔「非 ASCII 單字元 vk 用自身碼位」的既有契約（'é' → 'É' 的 201）。改取碼位後
+    // '😀' 得到 0x1F600，BMP 字元結果完全不變（codePointAt === charCodeAt）。
+    vk: keyChar.codePointAt(0),
     text: legacy ? (asciiPrintable ? c : undefined) : printable ? c : undefined,
   };
 }

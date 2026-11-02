@@ -276,6 +276,17 @@ async function handleRequest(req, res) {
     res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('bad request target');
     return;
   }
+  // The loopback-Host / no-Origin guard must run before *every* route. It used to sit
+  // below the static handlers, so /newtab, /showcase and /docs answered cross-site
+  // fetches (browsers always attach an Origin to those) and DNS-rebinding probes (Host
+  // pointing at the attacker's domain) with 200, bypassing the very check the rest of
+  // the API relies on. The pages themselves are not secret, but a bypass that only
+  // exists for the first two routes is not a defence at all — and it makes the daemon
+  // trivially fingerprintable from any web page.
+  if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
+    res.writeHead(403).end('forbidden host/origin');
+    return;
+  }
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -287,10 +298,6 @@ async function handleRequest(req, res) {
     } catch (e) {
       res.writeHead(404).end('Not found');
     }
-    return;
-  }
-  if (req.headers.origin || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host || '')) {
-    res.writeHead(403).end('forbidden host/origin');
     return;
   }
   if (url.pathname === '/health') { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, chrome: chromeReady, spaces: store.list().length })); return; }

@@ -552,6 +552,14 @@ async function pageCall(p) {
   const [method, ...args] = [p.method, ...(p.args || [])];
   sp.activeTargetId = tid;
   let result;
+  // Cursor position is per target. A single h._pos made page B's mouse.down
+  // reuse page A's last point, and click/hover/drag never recorded a point at all.
+  const rememberMouse = (x, y) => {
+    if (!h._mousePos) h._mousePos = new Map();
+    const pos = { x, y };
+    h._mousePos.set(tid, pos);
+    h._pos = pos;
+  };
   switch (method) {
     case 'goto': result = await h.goto(tid, ...args); break;
     case 'reload': result = await h.goto(tid, pg.url || 'about:blank', args[0] || {}); break;
@@ -585,6 +593,7 @@ async function pageCall(p) {
       const r = await h.resolveInTime(tid, args[0], 'hover', args[1]?.timeout ?? 3000);
       const box = await h.call(tid, 'ensureVisible', JSON.stringify([r.hid]));
       await h.mouseInput(tid, 'mouseMoved', box.cx, box.cy);
+      rememberMouse(box.cx, box.cy);
       result = await h.actionReceipt(tid, Date.now() - 500);
       break;
     }
@@ -598,6 +607,7 @@ async function pageCall(p) {
       await h.mouseInput(tid, 'mouseMoved', (b1.cx + b2.cx) / 2, (b1.cy + b2.cy) / 2);
       await h.mouseInput(tid, 'mouseMoved', b2.cx, b2.cy);
       await h.mouseInput(tid, 'mouseReleased', b2.cx, b2.cy);
+      rememberMouse(b2.cx, b2.cy);
       result = await h.actionReceipt(tid, Date.now() - 1000);
       break;
     }
@@ -625,6 +635,7 @@ async function pageCall(p) {
     case 'mouse.click': {
       const [x, y, opts = {}] = args;
       await h.mouseInput(tid, 'mouseMoved', x, y);
+      rememberMouse(x, y);
       await h.mouseInput(tid, 'mousePressed', x, y, { button: opts.button, clickCount: opts.clickCount });
       if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay));
       await h.mouseInput(tid, 'mouseReleased', x, y, { button: opts.button, clickCount: opts.clickCount });
@@ -634,14 +645,20 @@ async function pageCall(p) {
     case 'mouse.move': {
       const [x, y, opts = {}] = args;
       const steps = opts.steps ?? 1;
-      for (let i = 1; i <= steps; i++) await h.mouseInput(tid, 'mouseMoved', x * i / steps, y * i / steps);
-      h._pos = { x, y };
+      const start = h._mousePos?.get(tid) || { x: 0, y: 0 };
+      for (let i = 1; i <= steps; i++) {
+        const px = start.x + (x - start.x) * (i / steps);
+        const py = start.y + (y - start.y) * (i / steps);
+        await h.mouseInput(tid, 'mouseMoved', px, py);
+      }
+      rememberMouse(x, y);
       result = {};
       break;
     }
     case 'mouse.down': case 'mouse.up': {
       const [opts = {}] = args;
-      await h.rawMouse(tid, method === 'mouse.down' ? 'down' : 'up', [h._pos?.x ?? 0, h._pos?.y ?? 0], opts);
+      const pos = h._mousePos?.get(tid) || { x: 0, y: 0 };
+      await h.rawMouse(tid, method === 'mouse.down' ? 'down' : 'up', [pos.x, pos.y], opts);
       result = {};
       break;
     }

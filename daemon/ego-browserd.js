@@ -128,6 +128,7 @@ async function rebindSpaces() {
   for (const sp of store.list()) {
     for (const [label, p] of Object.entries(sp.pages)) {
       if (p.targetId && hub.sessions.has(p.targetId)) continue;
+      if (p.targetId != null && p.targetId === sp.activeTargetId) sp.activeTargetId = null;
       delete sp.pages[label];
     }
     if (Object.keys(sp.pages).length === 0) {

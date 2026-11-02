@@ -225,7 +225,12 @@ export function keyDescriptor(name) {
   // code 回 null、vk 用自身碼位（CharCode 仍為整數）。
   const keyChar = upper.length === 1 ? upper : c;
   let code = null;
-  if (/[A-Z]/.test(keyChar)) code = 'Key' + keyChar;
+  // 只有「ASCII 字母本身」才對應到美式鍵盤上的 Key<A-Z>。少數非 ASCII 字元的大寫會落在
+  // ASCII 字母上：'ı'（U+0131）→ 'I'、'ſ'（U+017F）→ 'S'。沿用 keyChar 推導會讓這類字元
+  // 借到別的按鍵的實體 code（'KeyI'／'KeyS'）與 vk（73／83），dispatch 出去頁面收到的
+  // key 是 'ı'／'ſ'、code 卻是 'KeyI'／'KeyS'，事件自相矛盾。它們在美式鍵盤上沒有實體
+  // 按鍵，比照其他非 ASCII 字元：code 回 null（vk 仍沿用本檔「取大寫碼位」的既有契約）。
+  if (/^[A-Za-z]$/.test(c)) code = 'Key' + upper;
   else if (/[0-9]/.test(c)) code = 'Digit' + c;
   else if (c === ' ') code = 'Space'; // 與具名鍵 Space 一致（舊版回 null）
 

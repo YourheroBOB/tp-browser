@@ -38,7 +38,15 @@ fi
 for flush_port in $FLUSH_PORTS; do
   curl -fsS --max-time 3 "http://127.0.0.1:$flush_port/flush-and-close" >/dev/null 2>&1 || true
 done
-sleep 1.0
+# Give the daemon a moment to complete the flush before signalling anything.
+# This has to stay an *integer* argument: POSIX only guarantees whole seconds,
+# and a sleep that rejects fractional values (BusyBox without
+# CONFIG_FEATURE_FLOAT_SLEEP — Alpine and other minimal images) fails right
+# here. Because this script runs under `set -e`, that failure aborted the whole
+# stop before a single pkill was sent: the daemon and the agent Chrome kept
+# running while tp-stop exited non-zero with no output at all. The two waits
+# further down already used `sleep 1`; this one was the odd `sleep 1.0` out.
+sleep 1
 
 pkill -f "$EGO_RE" 2>/dev/null || true
 pkill -f "$TPD_RE" 2>/dev/null || true

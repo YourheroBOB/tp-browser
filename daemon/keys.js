@@ -157,6 +157,7 @@ const NAMED = Object.assign(Object.create(null), {
 for (const [name, v] of Object.entries(NAMED)) {
   if (!v.key) v.key = name;
   if (!v.code) v.code = name;
+  Object.freeze(v);
 }
 
 // 既有 w0 測試（test_fmb_keys / test_fmb_edge_keys / test_fmb_prop_keys / test_fmb_keys_chords）

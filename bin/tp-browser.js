@@ -3,7 +3,7 @@
 // `tp-browser nodejs` (or `ego-browser nodejs`) runs a Node.js script with the taskSpace()/page() SDK.
 // Script code arrives via -e or stdin (heredoc) — never from argv file paths —
 // and this CLI never spawns processes: it talks HTTP+SSE to tp-browserd / ego-browserd.
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -276,22 +276,44 @@ function thrownStack(value) {
 // stdin 立刻 EOF ⇒ 執行空腳本 ⇒ 回報 exit 0，呼叫端因此誤判「任務已執行」；
 // 而且過程中 ensureRunning 還會先把瀏覽器啟動器拉起來，白白開了一個瀏覽器。
 // 非旗標的第一個參數維持舊行為（忽略並從 stdin 讀），避免破壞既有呼叫方式。
-function validateNodeJsArgs(args) {
+// 驗證邏輯抽成純函式：不印訊息、不 process.exit、不碰網路。
+// 這樣測試就能直接 import 逐條驗證每個分支（含「不該誤擋」的反向案例），
+// 不必為每一種輸入都啟動一個子程序；真正的入口 validateNodeJsArgs() 只負責印訊息與退出。
+export function nodeJsArgsError(args) {
   const first = args[0];
-  if (first === undefined) return; // 走 stdin／heredoc 路徑，與以往完全相同
+  if (first === undefined) return null; // 走 stdin／heredoc 路徑，與以往完全相同
   if (first === '-e') {
     if (args.length < 2 || typeof args[1] !== 'string') {
-      console.error("tp-browser nodejs: -e requires a script string, e.g. tp-browser nodejs -e 'console.log(1)'");
-      console.error('tp-browser nodejs: nothing was executed; no daemon or browser was started.');
-      process.exit(2);
+      return [
+        "tp-browser nodejs: -e requires a script string, e.g. tp-browser nodejs -e 'console.log(1)'",
+        'tp-browser nodejs: nothing was executed; no daemon or browser was started.',
+      ];
     }
-    return;
+    // 同一個病灶的另一半：`-e "$VAR"` 在 VAR 未設定／展開失敗時傳進來的是「空字串」，
+    // 舊寫法會照樣執行空腳本並回 exit 0，呼叫端同樣誤判「任務已執行」。
+    // 只含 BOM／空白的腳本也一樣沒有任何作用，因此在連線 daemon、拉起瀏覽器之前先擋掉。
+    if (args[1].replace(/^\uFEFF/, '').trim() === '') {
+      return [
+        'tp-browser nodejs: -e received an empty script (only BOM/whitespace); nothing was executed.',
+        "tp-browser nodejs: pass real code, e.g. tp-browser nodejs -e 'console.log(1)'  |  tp-browser nodejs < script.js",
+      ];
+    }
+    return null;
   }
   if (typeof first === 'string' && first.startsWith('-')) {
-    console.error(`tp-browser nodejs: unknown option ${first} (only -e is supported)`);
-    console.error('tp-browser nodejs: usage: tp-browser nodejs -e "code"  |  tp-browser nodejs < script.js');
-    process.exit(2);
+    return [
+      `tp-browser nodejs: unknown option ${first} (only -e is supported)`,
+      'tp-browser nodejs: usage: tp-browser nodejs -e "code"  |  tp-browser nodejs < script.js',
+    ];
   }
+  return null;
+}
+
+function validateNodeJsArgs(args) {
+  const lines = nodeJsArgsError(args);
+  if (!lines) return;
+  for (const line of lines) console.error(line);
+  process.exit(2);
 }
 
 async function runNodeJs(args) {
@@ -354,9 +376,26 @@ async function runNodeJs(args) {
   process.exit(exitCode);
 }
 
-main().catch((e) => {
-  // 這裡同樣可能收到非 Error 值；而且 SSE 串流可能已經開啟，事件迴圈不會自己排空，
-  // 所以一定要顯式 process.exit(1)，不能只設 process.exitCode。
-  try { console.error(describeThrown(e)); } catch {}
-  process.exit(1);
-});
+// 只有「被當成 CLI 直接執行」時才跑 main()；本檔被 import（例如測試）時不得有副作用，
+// 否則就無法在不啟動子程序的前提下驗證 nodeJsArgsError() 這類純函式。
+// 判定不出來時一律回 true（照舊執行）：寧可多跑一次，也絕不能讓 CLI 變成靜默 no-op。
+function isCliEntryPoint() {
+  try {
+    const self = fileURLToPath(import.meta.url);
+    const entry = process.argv[1];
+    if (!entry) return false;
+    if (entry === self) return true;
+    return realpathSync(entry) === realpathSync(self);
+  } catch {
+    return true;
+  }
+}
+
+if (isCliEntryPoint()) {
+  main().catch((e) => {
+    // 這裡同樣可能收到非 Error 值；而且 SSE 串流可能已經開啟，事件迴圈不會自己排空，
+    // 所以一定要顯式 process.exit(1)，不能只設 process.exitCode。
+    try { console.error(describeThrown(e)); } catch {}
+    process.exit(1);
+  });
+}

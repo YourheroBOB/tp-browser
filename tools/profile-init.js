@@ -298,6 +298,15 @@ if (bestCandidate) {
     const srcOsCrypt = readSourceOsCrypt(srcLocalStatePath);
     if (!srcOsCrypt) {
       console.log('Skipped Cookies sync: source Local State has no usable os_crypt');
+    } else if (loginKeysConflict) {
+      // Replacing the destination `os_crypt.encrypted_key` with the source one strands every
+      // key-dependent row that stays in profile-agent (the Login Data / Web Data files kept by the
+      // block above, which this branch does not replace): they were encrypted under the
+      // destination key, and the swap deletes exactly that key. The result is a destination whose
+      // logins can never be decrypted again — the very loss the Login Data block refuses to cause.
+      // A key conflict must therefore leave the whole destination pair (Local State + Cookies)
+      // untouched, keeping key and payload consistent.
+      console.log('Skipped Cookies sync: source and destination os_crypt.encrypted_key differ');
     } else {
       // Stage both files next to the destination, then swap them in an order that can be rolled
       // back. Local State (the decryption key) is replaced first and restored from the snapshot

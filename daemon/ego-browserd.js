@@ -50,8 +50,18 @@ const CHROME_VERSION_URL = ALT_PORT ? 'http://127.0.0.1:9775/json/version' : 'ht
 const DOWNLOADS_DIR = join(DATA_DIR, 'downloads');
 // POST /rpc body cap (bytes). Beyond this the daemon answers 413 PayloadTooLarge.
 const MAX_RPC_BODY_BYTES = 1048576;
-mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-mkdirSync(DOWNLOADS_DIR, { recursive: true, mode: 0o700 });
+// mkdirSync() only applies `mode` when it actually creates the directory, so a data
+// root / downloads directory left behind by an earlier run, an older installer or a
+// different umask keeps whatever looser bits it already had — and everything private
+// lives in there (profile-agent cookies, the auth token, spaces.json with page URLs
+// and titles, and documents downloaded from authenticated sessions). Re-assert 0700
+// on every start, the same way ensureToken() re-asserts 0600 on the token file.
+function ensurePrivateDir(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { chmodSync(dir, 0o700); } catch {}
+}
+ensurePrivateDir(DATA_DIR);
+ensurePrivateDir(DOWNLOADS_DIR);
 
 const store = new Store(join(DATA_DIR, 'spaces.json'));
 let hub = null;
@@ -176,7 +186,21 @@ function checkToken(req) {
   if (b.length === 0 || TOKEN_BUF.length === 0) return false;
   return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
 }
-writeFileSync(join(DATA_DIR, 'daemon.json'), JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
+// Exactly the trap documented for the token file: writeFileSync() only honours
+// `mode` when it creates the file, so a daemon.json left behind at 0644 by an
+// earlier run stayed readable. Force the bits after writing instead of trusting
+// the create-time mode (chmod may be unsupported on some filesystems → try/catch).
+const DAEMON_INFO_PATH = join(DATA_DIR, 'daemon.json');
+writeFileSync(DAEMON_INFO_PATH, JSON.stringify({ port: PORT, chromePort: CHROME_DEBUG_PORT, pid: process.pid, startedAt: new Date().toISOString() }, null, 1), { mode: 0o600 });
+try { chmodSync(DAEMON_INFO_PATH, 0o600); } catch {}
+
+// Maintenance / verification flag: initialize directories, token, and daemon.json
+// (with all permission convergence applied) and exit cleanly without binding ports
+// or attempting Chromium connection. Allows fast, deterministic, non-interfering
+// smoke / regression verification.
+if (process.argv.includes('--init-only')) {
+  process.exit(0);
+}
 
 // ---------- SSE push channels ----------
 const sseClients = new Set();

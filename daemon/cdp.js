@@ -88,6 +88,30 @@ export class Cdp {
         previous.onclose = null;
         try { previous.close(); } catch {}
       }
+      // 握手尚未完成時 this.ws 仍是 null，上面的分支不會跑。此時再次 connect()
+      // 會再 new 一條 WebSocket，兩條握手並存：舊 socket 沒人關閉；誰先 onopen
+      // 誰寫入 this.ws，較舊的握手可以把現役 socket 搶回去；已排進事件佇列的
+      // onmessage 仍會把失效事件送進 handlers；較早那次 connect() 的 promise
+      // 與計時器一直留到自己的逾時才拒絕。
+      // 先把進行中的握手定案為「CDP connect failed」（client 本身還活著，失敗的
+      // 只是被取代的那一次），解除回呼後再 close。先定案再關，避免 close 同步
+      // 觸發的 open 在 settled 仍為 false 時把舊 socket 掛回 this.ws。
+      const supersededSockets = [...this.connectSockets];
+      const supersededRejects = [...this.connectRejects];
+      this.connectSockets.clear();
+      this.connectRejects.clear();
+      for (const old of supersededSockets) {
+        old.onopen = null;
+        old.onmessage = null;
+        old.onerror = null;
+        old.onclose = null;
+      }
+      for (const rejectConnect of supersededRejects) {
+        try { rejectConnect(new Error(`CDP connect failed: ${this.wsUrl}`)); } catch {}
+      }
+      for (const old of supersededSockets) {
+        try { old.close(); } catch {}
+      }
       const ws = new WebSocket(this.wsUrl);
       this.connectSockets.add(ws);
       // connect() 必須恰好 settle 一次，而且理由必須是「真正先發生」的那一個。
@@ -154,7 +178,13 @@ export class Cdp {
           try { fn(); } catch (e) { console.error('[ego-browserd] close handler error:', e); }
         }
       };
-      ws.onmessage = (ev) => this._recv(ev.data);
+      ws.onmessage = (ev) => {
+        // 只接受目前掛在 this.ws 上、且 client 尚未 close() 的 socket。
+        // 被較新 connect() 取代的握手，以及 close() 之後才送到的 message，
+        // 即使事件迴圈裡還握著當初的函式參照，也在這裡停住。
+        if (this.ws !== ws || this.closed) return;
+        this._recv(ev.data);
+      };
     });
   }
 

@@ -408,8 +408,13 @@ async function dispatch(method, p) {
         if (pg.targetId) { try { await h.cdp.send('Target.closeTarget', { targetId: pg.targetId }); } catch {} }
         closed.push(label);
       }
+      for (const label of closed) store.removePage(sp.id, label);
       let deleted = false;
-      if (keep.length === 0) { store.deleteSpace(sp.id); deleted = true; }
+      const left = store.get(sp.id);
+      if (left && Object.keys(left.pages).length === 0) {
+        store.deleteSpace(sp.id);
+        deleted = true;
+      }
       return { retained: keep, closed, deleted };
     }
     case 'space.tabs': {

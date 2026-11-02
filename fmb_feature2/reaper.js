@@ -178,8 +178,10 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
   }
 
   // 上限：只犧牲「非存活、非受保護」的空間，由最舊的開始；永不為滿足上限而關閉存活空間。
+  // null / NaN 表示不設上限。Number(null) === 0，若直接轉換會把上限當成 0，
+  // 每一個非存活空間都會被回收。
   let overCap = 0;
-  const maxSpaces = Number(p.maxSpaces);
+  const maxSpaces = p.maxSpaces === null ? Number.NaN : Number(p.maxSpaces);
   if (Number.isFinite(maxSpaces) && maxSpaces >= 0) {
     const remaining = ordered.filter((s) => !closed.has(String(s.id)));
     const overflow = remaining.length - maxSpaces;

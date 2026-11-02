@@ -243,7 +243,20 @@ function isBrowserCrossSite(req) {
 
 // ---------- HTTP server ----------
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://127.0.0.1');
+  // `req.url` is fully caller-controlled. A request-target of "//" (produced by
+  // `curl http://127.0.0.1:9772//` or, more importantly, by ANY web page with
+  // <img src="http://127.0.0.1:9772//">) makes `new URL()` throw
+  // ERR_INVALID_URL. Because this handler is async, that surfaces as an
+  // unhandled promise rejection, which terminates the daemon *before* the
+  // Host/Origin/Sec-Fetch-Site guard below ever runs — i.e. the guard itself
+  // becomes bypassable by crashing the process. Answer 400 and stay alive.
+  let url;
+  try {
+    url = new URL(req.url, 'http://127.0.0.1');
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('bad request target');
+    return;
+  }
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;

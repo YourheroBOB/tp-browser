@@ -335,6 +335,16 @@ function removeTmpRunDir(dir) {
 }
 
 async function runNodeJs(args) {
+  // `-e` 以外的 dash 開頭參數（打錯的旗標，例如 --eval）：舊寫法掉進 stdin 分支，
+  // stdin 立刻 EOF 就被誤報成「the script is empty」，使用者看不出真正的錯。
+  // 在接觸 stdin／daemon／啟動器之前就以用法錯誤結束（與 bin/tp-browser.js 同原則）。
+  // 非旗標的首參數維持舊行為（忽略並從 stdin 讀），避免破壞既有呼叫方式。
+  const firstArg = args[0];
+  if (typeof firstArg === 'string' && firstArg.startsWith('-') && firstArg !== '-e') {
+    console.error(`tp-browser nodejs: unknown option ${firstArg} (only -e is supported)`);
+    console.error('tp-browser nodejs: usage: tp-browser nodejs -e "code"  |  tp-browser nodejs < script.js');
+    process.exit(2);
+  }
   let code = null;
   if (args[0] === '-e') {
     // `-e` 少了腳本字串時，舊寫法把 undefined 靜靜變成空腳本：先透過 ensureRunning() 去連

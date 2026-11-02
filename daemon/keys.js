@@ -226,6 +226,16 @@ export function keyDescriptor(name) {
   const chars = [...name];
   if (chars.length !== 1) return null;
   const c = chars[0];
+  // 單一 UTF-16 代理碼元（lone surrogate）不是合法字元：多半是字串被截斷
+  // （'😀'.slice(0, 1) 只留下前半）或外部輸入本身壞掉。這種「字元」在美式鍵盤上沒有
+  // 對應按鍵，也沒有可用的虛擬鍵碼 —— 舊版會回傳 windowsVirtualKeyCode 落在 Unicode
+  // 保留代理區（0xD800–0xDFFF）的描述子，parseChord 更會靜默接受它，dispatch 出去
+  // 就是無效事件（也與本檔對非 BMP 字元「vk 不得落在代理區」的契約相違）。
+  // 合法代理對在 [...name] 下長度為 2（單一碼位），不會走到這裡，行為完全不變。
+  if (c.length === 1) {
+    const unit = c.charCodeAt(0);
+    if (unit >= 0xd800 && unit <= 0xdfff) return null;
+  }
   const upper = c.toUpperCase();
   // 只採用「單一碼位」的大寫對應來推導實體鍵碼：多數單一字元的大寫是單一碼位，但
   // 'ß'.toUpperCase() 是 'SS'、'ﬀ' 是 'FF'、'ΐ' 是 'Ϊ' + 組合重音、'ǰ' 是 'J' + ˇ。

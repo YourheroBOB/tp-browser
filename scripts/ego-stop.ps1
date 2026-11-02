@@ -39,6 +39,20 @@ for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
     Start-Sleep -Milliseconds 300
 }
 
+# 強制終止是非同步的：Stop-Process -Force 只送出終止訊號，程序（尤其 chrome.exe
+# 這類多子程序、或正被其他 shell 回收的程序）不會立刻從系統消失。上面的重試迴圈
+# 可能在「剛送出最後一次終止」之後就結束，此時 $Remaining 仍是終止前拍下的快照；
+# 直接拿它判定失敗，會把一個其實已經停好的 stop 誤報成失敗（exit 1）。
+# 因此在判定成敗之前，重新查詢真正的狀態，並給程序一段有限、有界的寬限時間。
+for ($Verify = 0; $Verify -lt 3; $Verify++) {
+    $Remaining = @(Get-CimInstance Win32_Process | Where-Object {
+        ($_.Name -match '^(node|chrome|msedge|brave)\.exe$') -and
+        ($_.CommandLine -like "*ego-browserd.js*" -or $_.CommandLine -like "*tp-browserd.js*" -or $_.CommandLine -like "*ego-linux*profile-agent*")
+    })
+    if ($Remaining.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 300
+}
+
 if ($Remaining.Count -gt 0) {
     Write-Output "EGO_STOP_FAILED (terminated $Stopped processes, $($Remaining.Count) still running)"
     exit 1

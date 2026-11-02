@@ -120,10 +120,19 @@ async function health(port) {
   } catch { return null; }
 }
 
+function explicitDaemonPort() {
+  const v = Number(process.env.TP_DAEMON_PORT);
+  return Number.isInteger(v) && v > 0 && v <= 65535;
+}
 async function ensureRunning() {
   let port = readPort();
   let h = await health(port);
   if (h && h.ok && h.chrome) return { port, h };
+  // TP_DAEMON_PORT 明確指定時不自動跑啟動器：tp-start.sh 只會在預設的 9772/9773（或 --alt-port 的
+  // 9774/9775）起 daemon 與一個 detached 的 Chrome，根本不會用到這個埠。舊寫法在健康檢查一失敗
+  // （假 daemon 被負載拖過 2.5 秒、或測試刻意模擬 daemon 不在）就照跑，於是每次都在隔離 HOME 下
+  // 多開一個佔 9773 的無頭 Chrome，測試結束刪掉 HOME 後成為孤兒，累積上百個把整台機器拖垮。
+  if (explicitDaemonPort()) return { port, h };
   runLauncher('start', [], true);
   port = readPort();
   h = await health(port);

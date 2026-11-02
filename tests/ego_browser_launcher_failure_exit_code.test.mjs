@@ -58,6 +58,9 @@ function closedLoopbackPort() {
 
 test('nodejs：自動啟動失敗時沿用啟動器退出碼並保留原因', async () => {
   const port = await closedLoopbackPort();
+  // 用 daemon.json（啟動器寫下的埠）指向關閉的埠，而不是 TP_DAEMON_PORT：
+  // TP_DAEMON_PORT 明確指定時 CLI 刻意不自動啟動（見 fmb_no_autostart_leak.test.mjs）。
+  writeFileSync(join(dataDir, 'daemon.json'), JSON.stringify({ port, chromePort: port }), 'utf8');
   const res = spawnSync(process.execPath, [CLI, 'nodejs', '-e', 'console.log("FAKE_SCRIPT_MUST_NOT_RUN")'], {
     encoding: 'utf8',
     timeout: 60_000,
@@ -65,7 +68,7 @@ test('nodejs：自動啟動失敗時沿用啟動器退出碼並保留原因', as
       ...process.env,
       HOME: home,
       USERPROFILE: home,
-      TP_DAEMON_PORT: String(port),
+      TP_DAEMON_PORT: '',
     },
   });
 

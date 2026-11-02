@@ -48,7 +48,11 @@ function countBookmarks(file) {
     const j = JSON.parse(readFileSync(file, 'utf8'));
     const b1 = (j.roots?.bookmark_bar?.children || []).length;
     const b2 = (j.roots?.other?.children || []).length;
-    return b1 + b2;
+    // Chrome's third root is `synced` (older files still use `mobile`).
+    // Omitting it makes a phone-synced profile score 0 and skips the import.
+    const third = j.roots?.synced ?? j.roots?.mobile;
+    const b3 = (third?.children || []).length;
+    return b1 + b2 + b3;
   } catch { return 0; }
 }
 

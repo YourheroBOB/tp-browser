@@ -264,7 +264,7 @@ if (bestCandidate) {
   const loginDstOsCrypt = readSourceOsCrypt(join(profileRoot, 'Local State'));
   const loginSrcKey = loginSrcOsCrypt ? loginSrcOsCrypt.encrypted_key : null;
   const loginDstKey = loginDstOsCrypt ? loginDstOsCrypt.encrypted_key : null;
-  const loginKeysConflict = loginSrcKey !== null && loginDstKey !== null && loginSrcKey !== loginDstKey;
+  const loginKeysConflict = loginSrcKey !== loginDstKey;
 
   // Sync Login Data, Login Data For Account, and Web Data if missing or smaller in profile-agent
   for (const dbName of ['Login Data', 'Login Data For Account', 'Web Data']) {

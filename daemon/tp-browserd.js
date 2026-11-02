@@ -255,8 +255,21 @@ function isBrowserCrossSite(req) {
 }
 
 // ---------- HTTP server ----------
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://127.0.0.1');
+// req.url is caller-controlled and is NOT a full URL: a request line such as
+// `GET // HTTP/1.1` (or `GET http:// HTTP/1.1`) delivers the bare target "//",
+// and `new URL("//", base)` throws ERR_INVALID_URL (special-scheme-missing-host).
+// The handler is async and createServer() discards the returned promise, so that
+// throw used to become an unhandled rejection that terminated the daemon — one
+// malformed request from anything on loopback took every agent session down.
+// Parse the target defensively, and give the whole handler an error boundary.
+async function handleRequest(req, res) {
+  let url;
+  try {
+    url = new URL(req.url, 'http://127.0.0.1');
+  } catch {
+    res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: { name: 'BadRequest', message: 'invalid request target' } }));
+    return;
+  }
   if (url.pathname === '/newtab' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(NEWTAB_HTML);
     return;
@@ -321,6 +334,17 @@ const server = createServer(async (req, res) => {
     return;
   }
   res.writeHead(404).end('not found');
+}
+
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch(() => {
+    // Last-resort boundary: an async handler that rejects must never be allowed
+    // to leave the caller hanging or to crash the daemon.
+    try {
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: { name: 'InternalError', message: 'internal error' } }));
+    } catch {}
+  });
 });
 
 // ---------- RPC ----------

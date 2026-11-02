@@ -62,7 +62,10 @@
 
   function visibleInViewport(el) {
     const r = el.getBoundingClientRect();
-    if (r.width <= 0 && r.height <= 0) return false;
+    // Both axes must be non-empty. A collapsed box (height 0 or width 0) can
+    // still sit strictly inside the viewport; `&&` counted it as visible, so
+    // resolve() saw an extra match and refused to click the real element.
+    if (r.width <= 0 || r.height <= 0) return false;
     const st = window.getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
     const vw = window.innerWidth || document.documentElement.clientWidth;

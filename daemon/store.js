@@ -52,6 +52,9 @@ export class Store {
       this.data = parsed;
       normalizeNextSpaceId(this.data);
     } catch (e) {
+      // 重新載入或解析失敗時明確重設為全新空 ledger；否則既有實例在重載損毀檔時
+      // 會殘留舊資料，違背 starting fresh 降級承諾。
+      this.data = { nextSpaceId: 1, labelSeq: {}, spaces: {} };
       // 降級成空 ledger 之前，先把無法解析或根節點不合法的原檔原樣複製成
       // `${file}.corrupt-<timestamp>`：否則下一個 persist() 會把原檔直接覆寫成空 ledger，
       // 原本還能手動救回的 space／page／targetId 就永久消失，且不留任何痕跡。
@@ -99,7 +102,10 @@ export class Store {
       pages: { p1: { targetId: null, openedBy: 'agent', title: '', url: '' } },
       activeTargetId: null,
     };
-    this.data.labelSeq[id] = 1;
+    // 舊版或手編 ledger 可能整塊缺少 labelSeq，建立新空間時若直接指派會拋 TypeError；
+    // 此時防禦性補上空物件再設定序號（語意同 nextLabel 的容錯設計）。
+    const seq = this.data.labelSeq ?? (this.data.labelSeq = {});
+    seq[id] = 1;
     this.persist();
     return this.data.spaces[id];
   }

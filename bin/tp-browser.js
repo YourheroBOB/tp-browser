@@ -157,8 +157,15 @@ async function main() {
     else console.log('See https://github.com/YourheroBOB/tp-browser/blob/main/skills/tp-browser/SKILL.md');
     return;
   }
-  if (sub === 'version') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
-  console.log(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
+  if (sub === 'version' || sub === '--version' || sub === '-V') { console.log(`TooPower Browser (tp-browser) 0.3.1 [${osBuildTag()} — 強到沒朋友]`); return; }
+  // 未知子命令若與 help 一樣印到 stdout 並以 exit 0 結束，
+  // `tp-browser statsu && next` 會把「指令不存在」當成成功。
+  const usageToStdout = sub === 'help' || sub === '--help' || sub === '-h';
+  if (!usageToStdout) {
+    console.error(`tp-browser: unknown command "${sub}" (see: tp-browser help)`);
+    process.exitCode = 2;
+  }
+  (usageToStdout ? console.log : console.error)(`TooPower Browser / tp-browser (${osBuildTag()} — 強到沒朋友)
 usage:
   tp-browser nodejs -e 'code'       run an agent script (-e) or pipe one via stdin/heredoc (auto-starts if needed)
   tp-browser start                  start headless background browser (alias: tp-start / ego-start)

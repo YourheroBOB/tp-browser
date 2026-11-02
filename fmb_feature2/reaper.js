@@ -142,6 +142,9 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
     };
   }
 
+  // 空 live 集合是「沒有存活快照」，不是「全部已死」。旗標只放行閒置規則。
+  const noLiveSnapshot = live.size === 0;
+
   const ordered = [...candidates].sort(compareSpaces);
   const infos = new Map();
   for (const space of ordered) {
@@ -168,11 +171,11 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
       continue;
     }
 
-    const reapByDeath = info.kind === 'dead' && p.reapDeadSpaces === true;
+    const reapByDeath = !noLiveSnapshot && info.kind === 'dead' && p.reapDeadSpaces === true;
     const reapByIdle = info.idle === true;
     if (reapByDeath || reapByIdle) { closed.add(key); continue; }
 
-    if (p.dropDeadPages === true) {
+    if (!noLiveSnapshot && p.dropDeadPages === true) {
       for (const e of info.deadPages) dropPages.push({ spaceId: space.id, label: e.label, targetId: e.targetId });
     }
   }
@@ -186,7 +189,12 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
     if (overflow > 0) {
       const victims = remaining
         .filter((s) => !protectSet.has(String(s.id)) && s.pinned !== true)
-        .filter((s) => infos.get(String(s.id))?.kind !== 'live')
+        .filter((s) => {
+          const kind = infos.get(String(s.id))?.kind;
+          // 沒有快照時，dead/mixed 只是「target 不在空集合」的假象，不能當犧牲者。
+          if (noLiveSnapshot) return kind === 'empty' || kind === 'unbound';
+          return kind !== 'live';
+        })
         .slice(0, overflow);
       for (const v of victims) closed.add(String(v.id));
       overCap = victims.length;
@@ -195,7 +203,7 @@ export function planReap({ spaces, liveTargetIds, now, policy, protect } = {}) {
 
   const closeSpaces = ordered.filter((s) => closed.has(String(s.id))).map((s) => s.id);
   const finalDropPages = dropPages.filter((d) => !closed.has(String(d.spaceId)));
-  const staleActiveTargets = ordered
+  const staleActiveTargets = noLiveSnapshot ? [] : ordered
     .filter((s) => !closed.has(String(s.id)))
     .filter((s) => !protectSet.has(String(s.id)) && s.pinned !== true)
     .filter((s) => typeof s.activeTargetId === 'string' && s.activeTargetId !== '' && !live.has(s.activeTargetId))

@@ -149,6 +149,19 @@ if (-not $Restart) {
     } catch {}
 }
 
+# The daemon entry point must exist before any teardown happens. Both resolution paths
+# above can end up pointing at the same missing file (when this script runs from the
+# installed copy, Split-Path $PSScriptRoot -Parent IS $DataDir), and a WMI
+# Win32_Process.Create against a non-existent script fails without throwing: the caller
+# then waits through the whole browser poll and only ever sees an opaque EGO_NOT_READY.
+# Fail fast and loudly, but keep this check AFTER the healthy fast-path above (an
+# already-running stack must still return EGO_READY) and BEFORE the flush / Stop-Process
+# sweep below (a broken install must never tear down a live daemon + profile).
+if (-not (Test-Path -LiteralPath $DaemonJs -PathType Leaf -ErrorAction SilentlyContinue)) {
+    [Console]::Error.WriteLine("ERROR: ego-browserd.js not found at '$DaemonJs'; the installed daemon folder is missing or incomplete. Re-run install.ps1 and retry.")
+    exit 1
+}
+
 # Resolve the daemon ports that must be flushed before the Stop-Process sweep below.
 # 9772/9774 are the built-in pairs, but daemon.json may point a daemon at a custom port
 # (e.g. the :18802 stack recorded in STATE.md). ego-stop.ps1 already reads that file for
@@ -257,7 +270,16 @@ if (Test-Path $ProfileInitJs) {
 # 6. Launch ego-browserd.js FIRST so http://127.0.0.1:$DaemonPort/newtab is ready before browser window opens
 $AltFlag = if ($UseAlt) { " --alt-port" } else { "" }
 $DaemonCmdLine = "`"$NodeBin`" --experimental-websocket `"$DaemonJs`"$AltFlag"
-Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine } | Out-Null
+$DaemonLaunch = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $DaemonCmdLine }
+# Win32_Process.Create reports failure through ReturnValue instead of throwing, and the
+# previous "| Out-Null" discarded it: a rejected Create (AV/EDR block, quoting, policy)
+# looked exactly like a slow start and surfaced only as EGO_NOT_READY after the 12s poll.
+# A missing result object counts as "unknown" so this can never break a start that really
+# worked (e.g. a provider that returns nothing); only a real non-zero code fails hard.
+if (($null -ne $DaemonLaunch) -and ($DaemonLaunch.ReturnValue -ne 0)) {
+    [Console]::Error.WriteLine("ERROR: Win32_Process.Create failed to launch ego-browserd.js (ReturnValue=$($DaemonLaunch.ReturnValue)) from '$DaemonJs'; the browser daemon is not running.")
+    exit 1
+}
 Start-Sleep -Milliseconds 400
 
 # 7. Launch Chrome/Edge with CDP on $ChromePort

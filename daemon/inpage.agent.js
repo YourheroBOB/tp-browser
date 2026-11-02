@@ -221,8 +221,18 @@
         break;
       }
       case 'xpath': {
-        const xr = document.evaluate(spec.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        for (let i = 0; i < xr.snapshotLength; i++) els.push(xr.snapshotItem(i));
+        // document.evaluate() throws on a malformed expression (and XPathResult can be
+        // missing in exotic contexts). Every other selector kind reports bad input as
+        // { error: 'invalid selector' } instead of throwing through the CDP boundary.
+        let xr = null;
+        try { xr = document.evaluate(spec.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); } catch { return { els: [], spec, error: 'invalid selector' }; }
+        if (!xr) return { els: [], spec, error: 'invalid selector' };
+        // XPath may also return text/attribute nodes; only elements can be described,
+        // scrolled or clicked, so drop anything resolve()/describe() cannot handle.
+        for (let i = 0; i < xr.snapshotLength; i++) {
+          const node = xr.snapshotItem(i);
+          if (node && node.nodeType === 1) els.push(node);
+        }
         break;
       }
       default: return { els: [], spec, error: 'invalid selector' };
@@ -348,7 +358,9 @@
     if (!el) return { ok: false, error: 'stale handle' };
     let target = el;
     if (target.tagName === 'LABEL' && target.control) target = target.control;
-    el.focus && el.focus();
+    // Focus the node that will actually receive the text: focusing a LABEL is a no-op in
+    // browsers, so fill(label) used to leave focus on <body> and the typing went nowhere.
+    target.focus && target.focus();
     if (target.isContentEditable) {
       target.textContent = '';
       return { ok: true, editable: true };

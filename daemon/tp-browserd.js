@@ -130,16 +130,29 @@ function requireHub() {
 function tokenPath() { return join(DATA_DIR, 'token'); }
 function ensureToken() {
   const p = tokenPath();
-  if (!existsSync(p)) {
-    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(p, randomBytes(24).toString('hex'), { mode: 0o600 });
+  let t = '';
+  if (existsSync(p)) {
+    // A token file that exists but is empty (partial write, ENOSPC, a manual
+    // `touch`, a restored backup) used to yield TOKEN === '' — and then
+    // checkToken() compared two zero-length buffers, so timingSafeEqual()
+    // returned true and every local caller was authorised without a token.
+    // Treat an empty/unreadable token as "no usable token" and regenerate it;
+    // the CLI re-reads this file on every run, so nothing needs a restart.
+    try { t = readFileSync(p, 'utf8').trim(); } catch { t = ''; }
   }
-  return readFileSync(p, 'utf8').trim();
+  if (t === '') {
+    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+    t = randomBytes(24).toString('hex');
+    writeFileSync(p, t, { mode: 0o600 });
+  }
+  return t;
 }
 const TOKEN = ensureToken();
 const TOKEN_BUF = Buffer.from(TOKEN);
 function checkToken(req) {
-  const t = String(req.headers['x-tp-token'] || req.headers['x-ego-token'] || '');
+  if (TOKEN_BUF.length === 0) return false; // defence in depth: never accept an empty expected token
+  const hdr = req.headers['x-tp-token'] || req.headers['x-ego-token'] || '';
+  const t = typeof hdr === 'string' ? hdr : ''; // duplicated headers arrive as arrays; never coerce them
   const b = Buffer.from(t);
   return b.length === TOKEN_BUF.length && timingSafeEqual(b, TOKEN_BUF);
 }

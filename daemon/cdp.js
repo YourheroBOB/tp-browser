@@ -119,6 +119,12 @@ export class Cdp {
           settle(false, new Error(this.closed ? `CDP connect closed: ${this.wsUrl}` : `CDP connect failed: ${this.wsUrl}`));
           return;
         }
+        // 只有「本 client 現役的 socket（this.ws）」或「呼叫端已自行 close()」這兩種情況，
+        // close 事件才代表這條 client 的連線結束。握手逾時／失敗而被中止的 socket，以及被
+        // 較新 connect() 取代的舊 socket，真實 WebSocket 仍會派送 close；若照一般路徑處理，
+        // 會把從未連上的 client 永久標成 closed（之後重試 connect() 一律以 closed 失敗），
+        // 並對從未存在的連線誤發 close handler（daemon 的重新附掛邏輯因此被觸發）。
+        if (this.ws !== ws && !this.closed) return;
         this.closed = true;
         for (const [, p] of this.pending) {
           // 連線已死，回應永遠不會到；不清計時器的話每個未完成的 send 都會把

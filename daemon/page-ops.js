@@ -15,7 +15,16 @@ const STORAGE_VAULT_PATH = join(DATA_DIR, 'storage-vault.json');
 const TABS_VAULT_PATH = join(DATA_DIR, 'session-tabs.json');
 
 function cookieKey(c) {
-  return `${c.name || ''}|${c.domain || ''}|${c.path || '/'}`;
+  // CHIPS（partitioned cookie）除了 name/domain/path 之外，還以 partitionKey.topLevelSite 區分：
+  // 同一個 name/domain/path 在兩個不同頂層站台下是兩個彼此獨立的 cookie。
+  // 若鍵不納入 partitionKey，syncVaultNow() 會讓後寫入者覆蓋先寫入者（登入態無聲遺失），
+  // 且 restoreVaultToBrowser() 重啟後只還原得到其中一個分區。
+  // 未分區 cookie 產生的鍵與舊版完全相同，既有磁碟 vault 不需遷移。
+  const pk = c?.partitionKey;
+  const partition = (pk && typeof pk === 'object' && typeof pk.topLevelSite === 'string')
+    ? `|${pk.topLevelSite}|${pk.hasCrossSiteAncestor ? '1' : '0'}`
+    : '';
+  return `${c.name || ''}|${c.domain || ''}|${c.path || '/'}${partition}`;
 }
 
 function toCookieParam(c) {

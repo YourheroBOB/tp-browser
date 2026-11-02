@@ -17,8 +17,27 @@ EGO_RE="$(esc_regex 'ego-browserd.js')"
 TPD_RE="$(esc_regex 'tp-browserd.js')"
 PROFILE_RE="$(esc_regex "$PROFILE_DIR")"
 
-curl -fsS --max-time 3 "http://127.0.0.1:9772/flush-and-close" >/dev/null 2>&1 || true
-curl -fsS --max-time 3 "http://127.0.0.1:9774/flush-and-close" >/dev/null 2>&1 || true
+# The daemon is not always on the two default ports: daemon.json carries
+# {"port": <n>, "chromePort": <m>} and deployments move the daemon with it (the
+# Windows stopper ego-stop.ps1 already honours that file). Flushing only 9772 and
+# 9774 left a custom-port daemon un-flushed, so cookies/storage could be lost
+# when the SIGTERM below arrives. Parsing is deliberately forgiving: a damaged or
+# out-of-range daemon.json must never abort the stop path, so anything unparsable
+# falls back to the two defaults.
+FLUSH_PORTS="9772 9774"
+if [ -r "$DATA_DIR/daemon.json" ]; then
+  JSON_PORT="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*0*\([0-9][0-9]*\).*/\1/p' "$DATA_DIR/daemon.json" 2>/dev/null | sed -n '1p')"
+  if [ -n "$JSON_PORT" ] && [ "${#JSON_PORT}" -le 5 ] &&
+     [ "$JSON_PORT" -ge 1 ] && [ "$JSON_PORT" -le 65535 ] &&
+     [ "$JSON_PORT" != "9772" ] && [ "$JSON_PORT" != "9774" ]; then
+    FLUSH_PORTS="$FLUSH_PORTS $JSON_PORT"
+  fi
+fi
+
+# $FLUSH_PORTS is a deliberate space-separated list (unquoted split below).
+for flush_port in $FLUSH_PORTS; do
+  curl -fsS --max-time 3 "http://127.0.0.1:$flush_port/flush-and-close" >/dev/null 2>&1 || true
+done
 sleep 1.0
 
 pkill -f "$EGO_RE" 2>/dev/null || true

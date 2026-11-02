@@ -13,15 +13,34 @@ import { dirname } from 'node:path';
 // TypeError——daemon 雖然載入得到既有空間，卻再也開不了新 TaskSpace。labelSeq 為 null／
 // 純量會直接拋錯，為陣列則寫出畸形資料。因此載入後一併把 labelSeq 正規化成一般物件。
 // 註：刻意不新增 Store 的 prototype 方法，避免破壞 Store.prototype 的公開介面契約。
+// ledger 內既有 space id 的最大值：只認「安全正整數」。2**53 以上的 double 雖然通過
+// Number.isInteger，但 `n + 1 === n`，把它當基準會讓 create() 算出同一個 id，
+// 於是新空間直接寫進那個既有鍵、把舊空間覆蓋掉（資料遺失）。
+function maxSpaceId(spaces) {
+  if (spaces === null || typeof spaces !== 'object' || Array.isArray(spaces)) return 0;
+  let max = 0;
+  for (const key of Object.keys(spaces)) {
+    const n = Number(key);
+    if (Number.isSafeInteger(n) && n > max) max = n;
+  }
+  return max;
+}
+
+// maxId 之後的下一個安全整數 id；已達安全整數上限時停在上限（呼叫端另有防禦）。
+function nextSafeSpaceId(maxId) {
+  return maxId < Number.MAX_SAFE_INTEGER ? maxId + 1 : Number.MAX_SAFE_INTEGER;
+}
+
 function normalizeLedger(data) {
   if (data === null || typeof data !== 'object') return;
-  const spaces = data.spaces;
-  const ids = spaces !== null && typeof spaces === 'object' && !Array.isArray(spaces)
-    ? Object.keys(spaces).map((key) => Number(key)).filter((n) => Number.isInteger(n) && n > 0)
-    : [];
-  const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+  const maxId = maxSpaceId(data.spaces);
   const current = data.nextSpaceId;
-  if (!Number.isInteger(current) || current < 1 || current <= maxId) data.nextSpaceId = maxId + 1;
+  // 這裡必須用 Number.isSafeInteger 而不是 Number.isInteger：2**53 以上的 double 通過
+  // isInteger，但 `current + 1 === current`，create() 的 `nextSpaceId++` 會永遠停在原地，
+  // 連續兩次 create() 得到同一個 id——第二個 TaskSpace 直接覆蓋第一個（資料遺失）。
+  if (!Number.isSafeInteger(current) || current < 1 || current <= maxId) {
+    data.nextSpaceId = nextSafeSpaceId(maxId);
+  }
 
   // labelSeq 只補成一般物件；各空間的序號內容交給 nextLabel 的既有邏輯維護。
   const seq = data.labelSeq;
@@ -101,6 +120,12 @@ export class Store {
   // 東西（分別是 Object.prototype 與 Object 函式），若不擋就會被當成「存在的空間」。
   get(id) { return Object.hasOwn(this.data.spaces, id) ? (this.data.spaces[id] ?? null) : null; }
   create({ name, profileId = 'agent' }) {
+    // nextSpaceId 若被就地改成不安全整數／非正數（記憶體狀態被外部改寫、舊版呼叫端），
+    // `nextSpaceId++` 不會前進，連續兩次 create() 會拿到同一個 id 並覆蓋前一個空間；
+    // 這裡先依既有 spaces 重建一個安全的下一個 id。
+    if (!Number.isSafeInteger(this.data.nextSpaceId) || this.data.nextSpaceId < 1) {
+      this.data.nextSpaceId = nextSafeSpaceId(maxSpaceId(this.data.spaces));
+    }
     const id = this.data.nextSpaceId++;
     this.data.spaces[id] = {
       id, name, profileId, ownership: 'agent', state: 'active',
@@ -126,7 +151,13 @@ export class Store {
     // 因此從 labelSeq 續號後，逐一跳過 space 內「已存在」的 pN 標籤（只認 pages 自有鍵，
     // 避免繼承鍵誤判），並把 labelSeq 推進到實際發出的號碼；labelSeq 落後於實際 pN 標籤
     // 的舊 ledger 重載後也一樣不會再撞。
-    let n = (Number.isInteger(parsed) && parsed >= 1 ? parsed : 1) + 1;
+    // 續號同樣必須用 Number.isSafeInteger：labelSeq 若被寫成 2**53 以上的 double（手編／
+    // 舊版 ledger），`parsed + 1 === parsed`，nextLabel 會連續回傳同一個標籤，呼叫端
+    // addPage 就把上一個分頁覆蓋掉。序號已達安全整數上限時回繞到 p2，再靠下方迴圈
+    // 跳過既有分頁，保證每次發出的標籤都「沒被佔用」且一定前進。
+    const start = Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : 1;
+    let n = start + 1;
+    if (!Number.isSafeInteger(n)) n = 2;
     const pages = s.pages !== null && typeof s.pages === 'object' && !Array.isArray(s.pages) ? s.pages : {};
     while (Object.hasOwn(pages, `p${n}`)) n += 1;
     seq[spaceId] = n;

@@ -358,7 +358,6 @@ tp-browser nodejs < tests/smoke.ego.js
 - CI／品質關卡：`docs/fmb-ci/`
 - 可觀測性：`docs/fmb-observability/`
 - 升級與支援矩陣：`docs/fmb-upgrade/`
-- 安全稽核：`docs/fmb-security/`
 - Ledger 回收器：`fmb_feature2/README.md`
 - 操作手冊：`docs/fmb/RUNBOOK.md`；下一步規劃：`docs/fmb/ROADMAP.md`
 <<<FILE docs/fmb/ROADMAP.md>>>

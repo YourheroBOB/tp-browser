@@ -235,7 +235,6 @@ tp-start
 - 架構：`docs/fmb/ARCHITECTURE.md`；路線圖：`docs/fmb/ROADMAP.md`
 - API：`docs/fmb-api/`（cli.md／sdk.md／http-api.md）
 - 可觀測性（含敏感欄位規格）：`docs/fmb-observability/sensitive-fields.md`
-- 安全稽核：`docs/fmb-security/AUDIT.md`、`CHECKLIST.md`
 - Ledger 回收：`fmb_feature2/README.md`
 <<<FILE fmb_feature2/README.md>>>
 # fmb_feature2 — TaskSpace ledger 自動回收器（Reaper）

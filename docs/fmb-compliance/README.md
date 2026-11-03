@@ -34,4 +34,4 @@
 
 - 日誌去識別化的技術規格沿用 [`docs/fmb-observability/sensitive-fields.md`](../fmb-observability/sensitive-fields.md) 的「允許清單」設計。
 - 安裝來源未固定版本的供應鏈風險沿用 [`docs/fmb-upgrade/`](../fmb-upgrade/README.md) 的結論。
-- 程式碼安全面的未驗證項目沿用 [`docs/fmb-security/CHECKLIST.md`](../fmb-security/CHECKLIST.md)。
+- 程式碼安全面的未驗證項目沿用 內部安全檢查清單（不公開）。

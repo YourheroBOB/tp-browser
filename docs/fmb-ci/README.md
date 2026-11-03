@@ -65,7 +65,7 @@ PR / push
 
 - 升級／支援矩陣（Node 22 基線、Node 24 優先、Node 26 canary）見 `docs/fmb-upgrade/`；本提案的 CI 矩陣
   直接沿用該結論（Node 22 必測、24 必測、26 選擇性）。
-- 安全基準沿用 `docs/fmb-security/` 與 `docs/fmb-api/README.md` 的「文件示例一律用假值」原則，
+- 安全基準沿用 `docs/fmb-api/README.md` 的「文件示例一律用假值」原則，
   掃描器 allowlist 亦以此設計。
 
 ## 本次採用的保守決策（摘要，詳見各文件）

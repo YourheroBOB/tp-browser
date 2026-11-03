@@ -37,8 +37,6 @@
 | `docs/fmb-observability/inventory.md` | 文件 | **未審** | 本次未提供內容 |
 | `docs/fmb-observability/metrics-and-slo.md` | 文件 | **未審** | 本次未提供內容 |
 | `docs/fmb-observability/sensitive-fields.md` | 文件 | **未審** | 本次未提供內容 |
-| `docs/fmb-security/AUDIT.md` | 文件 | **未審** | 本次未提供內容 |
-| `docs/fmb-security/CHECKLIST.md` | 文件 | 已檢視 | 自述「未驗證」項目與本報告 F-31 一致 |
 | `docs/fmb-upgrade/01-inventory.md` | 文件 | **未審** | 本次未提供內容 |
 | `docs/fmb-upgrade/02-risk-register.md` | 文件 | **未審** | 本次未提供內容 |
 | `docs/fmb-upgrade/04-validation-and-rollback-runbook.md` | 文件 | **未審** | 本次未提供內容 |

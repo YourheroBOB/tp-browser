@@ -11,7 +11,7 @@ description: TooPower Browser (tp-browser / ego-browser) — 強到沒朋友 | Z
 
 ## 🔴 GOLDEN RULE FOR AI AGENTS: Launch the Browser Yourself!
 1. **NEVER ask the human user to manually launch Chrome, `tp-headed`, or `ego-headed`!** You have direct shell commands to pop up the visible GUI browser window on any desktop yourself (even over Windows OpenSSH Session 0, which `tp-headed` automatically bridges to the interactive desktop Session 1).
-2. **`tp-browser` and `ego-browser` are 100% interchangeable aliases** across macOS, Windows (`rog`, `pc`), and Linux (`abacus`, WSL2):
+2. **`tp-browser` and `ego-browser` are 100% interchangeable aliases** across macOS, Windows, and Linux (including WSL2):
    - Need **background headless** browsing? Just run `tp-browser nodejs << 'EOF' ...` (it **auto-starts** headless mode if not running!) or explicitly run `tp-start` (`ego-start` / `tp-browser start`).
    - Need a **human-visible GUI Chrome window** on the screen (so the user can log in, pass 2FA/Captcha, or watch)? Run **`tp-headed`** (or `ego-headed` / `tp-browser headed` / `ego-browser headed`) yourself!
    - If the GUI browser window is **already open** on the user's desktop, calling `tp-headed` is a safe no-op that preserves all open tabs.
@@ -28,18 +28,15 @@ description: TooPower Browser (tp-browser / ego-browser) — 強到沒朋友 | Z
 | `tp-browser status` | `ego-browser status` | Check JSON health (`{"ok":true,"chrome":true}`). |
 | `tp-browser doctor` | `ego-browser doctor` | Diagnose daemon & Chrome CDP readiness across Windows (`tp-win`), Linux (`tp-linux`), and macOS (`tp-mac`). |
 
-### Launching & Controlling Across Nodes (Mac / ROG / PC / Abacus)
+### Launching & Controlling Across Nodes (Local & Remote SSH Hosts)
 - **On current local machine (Mac / Windows / Linux)**:
   - Pop up visible GUI browser: `tp-headed`
   - Run script: `tp-browser nodejs << 'EOF' ... EOF`
-- **From Mac/PC targeting `ROG` Windows Desktop (`ssh rog`)**:
-  - Pop up visible GUI browser on ROG desktop: `ssh rog "tp-headed"`
-  - Run script on ROG: `ssh rog "tp-browser nodejs -e \"...\""` (or pipe via `ssh rog "tp-browser nodejs" << 'EOF'`)
-- **From Mac/ROG targeting `PC` (`ssh pc`)**:
-  - Pop up visible GUI browser on PC Windows desktop: `ssh pc "tp-headed"`
-  - Run script on PC: `ssh pc "tp-browser nodejs" << 'EOF'`
-- **Targeting `Abacus` (`ssh abacus`)**:
-  - Run script on Abacus: `ssh abacus "~/usage-browser/bin/abx.mjs nodejs" << 'EOF'`
+- **From local machine targeting a remote Windows host (`ssh remote-host`)**:
+  - Pop up visible GUI browser on remote desktop: `ssh remote-host "tp-headed"`
+  - Run script on remote host: `ssh remote-host "tp-browser nodejs -e \"...\""` (or pipe via `ssh remote-host "tp-browser nodejs" << 'EOF'`)
+- **Targeting a remote Linux host (`ssh remote-linux-host`)**:
+  - Run script on remote Linux host: `ssh remote-linux-host "tp-browser nodejs" << 'EOF'`
 
 ---
 
@@ -75,7 +72,7 @@ EOF
 ```
 
 > **IMPORTANT when opening a login page for the human user**:
-> 1. Run `tp-headed` (or `ssh rog "tp-headed"`) first so the GUI window is visible on the desktop.
+> 1. Run `tp-headed` (or `ssh remote-host "tp-headed"`) first so the GUI window is visible on the desktop.
 > 2. In your `tp-browser nodejs` script, navigate `await p.goto("https://...")` and **do NOT call `ts.closePage("p1")`** in `finally` if you want the tab to stay open on screen for the human user to log in!
 
 ---

@@ -75,9 +75,9 @@ node --test cpb_control/control.test.js
 本次在 Node.js `v26.7.0` 實際執行：**49/49 通過**（含子測試），
 沒有失敗、取消或略過；模組與測試的 `node --check` 亦通過。
 
-## 決策點與尚未整合
+## 選用式整合說明
 
-**待 BOB 決定是否將本行為設為 CLI 預設。** 建議對
+**本模組預設採選用式載入，由維護者決定是否將本行為設為 CLI 預設。** 若欲設為預設，可對
 `bin/tp-browser.js` 與 `bin/ego-browser.js` 套用同一組 patch；本次沒有修改兩檔：
 
 ```diff

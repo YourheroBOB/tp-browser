@@ -1,15 +1,14 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:2ede775e-eddf-59ae-bc3f-efa13d51ae6c",
+  "serialNumber": "urn:uuid:105d1316-8794-53b6-928a-2c84873feff2",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-24T14:13:45Z",
+    "timestamp": "2026-11-24T14:43:43Z",
     "tools": [
       {
-        "vendor": "YourHeroBar",
-        "name": "yhb-license-gate",
-        "version": "0.1.0"
+        "name": "spdx-sbom-generator",
+        "version": "0.2.0"
       }
     ],
     "component": {

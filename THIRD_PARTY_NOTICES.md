@@ -1,6 +1,6 @@
 # Third-Party Open-Source Notices — tp-browser
 
-> Generated automatically by `yhb-license-gate` v0.1.0 from locked dependency manifests.
+> Generated automatically from locked dependency manifests and verified open-data records.
 > - **Project license**: `Apache-2.0`
 > - **Distribution mode**: `library-cli` | **Policy**: `oss-permissive`
 > - **Total locked packages**: 0 (Runtime/Packaged: 0, Build/Dev-only: 0)

@@ -1,0 +1,13 @@
+{
+  "project_name": "tp-browser",
+  "repo_license": "Apache-2.0",
+  "distribution_mode": "library-cli",
+  "policy_profile": "oss-permissive",
+  "require_root_license": true,
+  "fail_on_red": true,
+  "fail_on_unreviewed_yellow_runtime": true,
+  "verified_licenses": {},
+  "reviewed_exceptions": [],
+  "non_code_assets": [],
+  "ai_models": []
+}
